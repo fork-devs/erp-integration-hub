@@ -4,6 +4,8 @@ import com.erp.integrationhub.application.dto.command.EmitirComprobanteCommand;
 import com.erp.integrationhub.application.dto.command.ItemComprobanteCommand;
 import com.erp.integrationhub.application.dto.result.ComprobanteResult;
 import com.erp.integrationhub.application.usecase.EmitirComprobanteUseCase;
+import com.erp.integrationhub.interfaces.rest.request.AnularComprobanteRequest;
+import com.erp.integrationhub.interfaces.rest.request.ConsultarEstadoComprobanteRequest;
 import com.erp.integrationhub.interfaces.rest.request.EmitirComprobanteRequest;
 import com.erp.integrationhub.interfaces.rest.response.ComprobanteResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
 
@@ -31,15 +34,30 @@ public class ElectronicInvoicingController {
     }
 
     @PostMapping("/emit")
-    @Operation(summary = "Emit electronic invoice/boleta to SUNAT via APISUNAT", description = "Submits invoice to SUNAT with idempotency guarantee and automatic outbox retry on failure")
+    @Operation(summary = "Emit electronic invoice/boleta to SUNAT via APISUNAT", description = "Submits invoice to SUNAT with deterministic idempotency guarantee and automatic outbox retry on failure")
     public ResponseEntity<ComprobanteResponse> emitInvoice(
             @RequestHeader("X-Tenant-ID") UUID tenantId,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyHeader,
             @Valid @RequestBody EmitirComprobanteRequest request) {
 
-        String effectiveIdempotencyKey = (idempotencyHeader != null && !idempotencyHeader.isBlank())
-                ? idempotencyHeader
-                : (request.comprobanteId() != null ? request.comprobanteId().toString() : UUID.randomUUID().toString());
+        String effectiveIdempotencyKey;
+        if (idempotencyHeader != null && !idempotencyHeader.isBlank()) {
+            effectiveIdempotencyKey = idempotencyHeader.trim();
+        } else if (request.comprobanteId() != null) {
+            effectiveIdempotencyKey = request.comprobanteId().toString();
+        } else {
+            String seed = String.format("invoice:%s:%s:%s:%d",
+                    tenantId,
+                    request.tipo(),
+                    request.serie(),
+                    request.numero()
+            );
+            effectiveIdempotencyKey = UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8)).toString();
+        }
+
+        UUID effectiveComprobanteId = request.comprobanteId() != null
+                ? request.comprobanteId()
+                : UUID.nameUUIDFromBytes(("comprobante:" + effectiveIdempotencyKey).getBytes(StandardCharsets.UTF_8));
 
         List<ItemComprobanteCommand> itemCommands = request.items().stream()
                 .map(i -> new ItemComprobanteCommand(
@@ -55,7 +73,7 @@ public class ElectronicInvoicingController {
 
         EmitirComprobanteCommand command = new EmitirComprobanteCommand(
                 tenantId,
-                request.comprobanteId() != null ? request.comprobanteId() : UUID.randomUUID(),
+                effectiveComprobanteId,
                 request.tipo(),
                 request.serie(),
                 request.numero(),
@@ -81,9 +99,12 @@ public class ElectronicInvoicingController {
     @Operation(summary = "Void/cancel electronic invoice, note or boleta via APISUNAT", description = "Dispatches communication of voiding (/api/v3/voided) or daily summary (/api/v3/daily-summary) to SUNAT")
     public ResponseEntity<ComprobanteResponse> voidInvoice(
             @RequestHeader("X-Tenant-ID") UUID tenantId,
-            @Valid @RequestBody com.erp.integrationhub.interfaces.rest.request.AnularComprobanteRequest request) {
+            @Valid @RequestBody AnularComprobanteRequest request) {
 
-        UUID compId = request.comprobanteId() != null ? request.comprobanteId() : UUID.randomUUID();
+        UUID compId = request.comprobanteId() != null
+                ? request.comprobanteId()
+                : UUID.nameUUIDFromBytes(("void:" + tenantId + ":" + request.tipo() + ":" + request.serie() + ":" + request.numero()).getBytes(StandardCharsets.UTF_8));
+
         ComprobanteResult result = emitirComprobanteUseCase.anularComprobante(
                 tenantId,
                 compId,
@@ -99,9 +120,12 @@ public class ElectronicInvoicingController {
     @Operation(summary = "Query document status in SUNAT via APISUNAT", description = "Retrieves current status, hash, XML, CDR, and PDF links (/api/v3/status)")
     public ResponseEntity<ComprobanteResponse> checkStatus(
             @RequestHeader("X-Tenant-ID") UUID tenantId,
-            @Valid @RequestBody com.erp.integrationhub.interfaces.rest.request.ConsultarEstadoComprobanteRequest request) {
+            @Valid @RequestBody ConsultarEstadoComprobanteRequest request) {
 
-        UUID compId = request.comprobanteId() != null ? request.comprobanteId() : UUID.randomUUID();
+        UUID compId = request.comprobanteId() != null
+                ? request.comprobanteId()
+                : UUID.nameUUIDFromBytes(("status:" + tenantId + ":" + request.tipo() + ":" + request.serie() + ":" + request.numero()).getBytes(StandardCharsets.UTF_8));
+
         ComprobanteResult result = emitirComprobanteUseCase.consultarEstadoComprobante(
                 tenantId,
                 compId,

@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 @RestController
@@ -29,19 +30,36 @@ public class PaymentIntegrationController {
     }
 
     @PostMapping("/charge")
-    @Operation(summary = "Process a credit/debit card payment via Stripe", description = "Executes charge with Stripe token and idempotency lock")
+    @Operation(summary = "Process a credit/debit card payment via Stripe", description = "Executes charge with Stripe token and deterministic idempotency lock")
     public ResponseEntity<PagoResponse> processCharge(
             @RequestHeader("X-Tenant-ID") UUID tenantId,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyHeader,
             @Valid @RequestBody ProcesarPagoRequest request) {
 
-        String effectiveIdempotencyKey = (idempotencyHeader != null && !idempotencyHeader.isBlank())
-                ? idempotencyHeader
-                : (request.paymentId() != null ? request.paymentId().toString() : UUID.randomUUID().toString());
+        // Deterministic Idempotency Key derivation to prevent duplicate card charges
+        String effectiveIdempotencyKey;
+        if (idempotencyHeader != null && !idempotencyHeader.isBlank()) {
+            effectiveIdempotencyKey = idempotencyHeader.trim();
+        } else if (request.paymentId() != null) {
+            effectiveIdempotencyKey = request.paymentId().toString();
+        } else {
+            // Deterministic hash based on payment transaction parameters
+            String seed = String.format("charge:%s:%s:%.2f:%s",
+                    tenantId,
+                    request.tokenTarjeta(),
+                    request.monto() != null ? request.monto().doubleValue() : 0.0,
+                    request.clienteEmail() != null ? request.clienteEmail().trim().toLowerCase() : ""
+            );
+            effectiveIdempotencyKey = UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8)).toString();
+        }
+
+        UUID effectivePaymentId = request.paymentId() != null
+                ? request.paymentId()
+                : UUID.nameUUIDFromBytes(("payment:" + effectiveIdempotencyKey).getBytes(StandardCharsets.UTF_8));
 
         ProcesarPagoCommand command = new ProcesarPagoCommand(
                 tenantId,
-                request.paymentId() != null ? request.paymentId() : UUID.randomUUID(),
+                effectivePaymentId,
                 request.monto(),
                 request.moneda() != null ? request.moneda() : "PEN",
                 request.tokenTarjeta(),

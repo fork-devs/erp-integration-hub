@@ -33,6 +33,9 @@ import java.util.UUID;
 @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
 public class IntegrationAdminController {
 
+    private static final int MAX_LIMIT = 100;
+    private static final int DEFAULT_LIMIT = 50;
+
     private final IntegrationAttemptRepositoryPort attemptRepositoryPort;
     private final RetryQueueRepositoryPort retryQueueRepositoryPort;
     private final ProcessRetryQueueUseCase processRetryQueueUseCase;
@@ -71,17 +74,19 @@ public class IntegrationAdminController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
+        int effectiveLimit = Math.max(1, Math.min(limit, MAX_LIMIT));
+
         List<IntegrationAttempt> attempts;
         if (tenantId != null) {
             if (referenceId != null) {
                 attempts = attemptRepositoryPort.findByTenantIdAndReferenceId(tenantId, referenceId);
             } else {
-                attempts = attemptRepositoryPort.findByTenantId(tenantId, limit);
+                attempts = attemptRepositoryPort.findByTenantId(tenantId, effectiveLimit);
             }
         } else if (status != null) {
-            attempts = attemptRepositoryPort.findByStatus(status, limit);
+            attempts = attemptRepositoryPort.findByStatus(status, effectiveLimit);
         } else {
-            attempts = attemptRepositoryPort.findByStatus(AttemptStatus.OK, limit);
+            attempts = attemptRepositoryPort.findByStatus(AttemptStatus.OK, effectiveLimit);
         }
 
         List<IntegrationAttemptResponse> response = attempts.stream()
@@ -116,7 +121,9 @@ public class IntegrationAdminController {
             return ResponseEntity.badRequest().build();
         }
 
-        List<RetryTask> tasks = retryQueueRepositoryPort.findDlqTasks(tenantId, limit);
+        int effectiveLimit = Math.max(1, Math.min(limit, MAX_LIMIT));
+
+        List<RetryTask> tasks = retryQueueRepositoryPort.findDlqTasks(tenantId, effectiveLimit);
         List<RetryTaskResponse> response = tasks.stream()
                 .map(RetryTaskResponse::fromDomain)
                 .toList();
@@ -133,7 +140,7 @@ public class IntegrationAdminController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
-        int processed = processRetryQueueUseCase.processPendingRetries(50);
+        int processed = processRetryQueueUseCase.processPendingRetries(DEFAULT_LIMIT);
         return ResponseEntity.ok(Map.of(
                 "message", "Retry processing cycle executed successfully",
                 "processedTasks", processed

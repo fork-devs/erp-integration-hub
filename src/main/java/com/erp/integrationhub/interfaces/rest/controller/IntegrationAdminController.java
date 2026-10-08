@@ -6,11 +6,15 @@ import com.erp.integrationhub.domain.model.IntegrationAttempt;
 import com.erp.integrationhub.domain.model.RetryTask;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
+import com.erp.integrationhub.infrastructure.security.AuthenticatedUser;
 import com.erp.integrationhub.interfaces.rest.response.IntegrationAttemptResponse;
 import com.erp.integrationhub.interfaces.rest.response.RetryTaskResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -41,12 +45,24 @@ public class IntegrationAdminController {
     }
 
     @GetMapping("/attempts")
-    @Operation(summary = "Query integration attempts", description = "Fetches integration attempt audit logs by reference ID or status")
+    @Operation(summary = "Query integration attempts", description = "Fetches integration attempt audit logs by reference ID or status with strict tenant isolation")
     public ResponseEntity<List<IntegrationAttemptResponse>> getAttempts(
             @RequestHeader(value = "X-Tenant-ID", required = false) UUID tenantId,
             @RequestParam(value = "referenceId", required = false) UUID referenceId,
             @RequestParam(value = "status", required = false) AttemptStatus status,
             @RequestParam(value = "limit", defaultValue = "50") int limit) {
+
+        AuthenticatedUser authUser = getAuthenticatedUser();
+
+        // Si el header X-Tenant-ID falta, resolver el tenant del usuario autenticado
+        if (tenantId == null && authUser != null && authUser.tenantId() != null) {
+            tenantId = authUser.tenantId();
+        }
+
+        // Validación estricta de acceso al tenant
+        if (tenantId != null && authUser != null && !authUser.canAccessTenant(tenantId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
 
         List<IntegrationAttempt> attempts;
         if (tenantId != null) {
@@ -71,8 +87,22 @@ public class IntegrationAdminController {
     @GetMapping("/dlq")
     @Operation(summary = "List Dead Letter Queue tasks", description = "Fetches failed integration tasks that exceeded maximum retry attempts")
     public ResponseEntity<List<RetryTaskResponse>> getDlqTasks(
-            @RequestHeader("X-Tenant-ID") UUID tenantId,
+            @RequestHeader(value = "X-Tenant-ID", required = false) UUID tenantId,
             @RequestParam(value = "limit", defaultValue = "50") int limit) {
+
+        AuthenticatedUser authUser = getAuthenticatedUser();
+
+        if (tenantId == null && authUser != null && authUser.tenantId() != null) {
+            tenantId = authUser.tenantId();
+        }
+
+        if (tenantId != null && authUser != null && !authUser.canAccessTenant(tenantId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
+        if (tenantId == null) {
+            return ResponseEntity.badRequest().build();
+        }
 
         List<RetryTask> tasks = retryQueueRepositoryPort.findDlqTasks(tenantId, limit);
         List<RetryTaskResponse> response = tasks.stream()
@@ -90,5 +120,13 @@ public class IntegrationAdminController {
                 "message", "Retry processing cycle executed successfully",
                 "processedTasks", processed
         ));
+    }
+
+    private AuthenticatedUser getAuthenticatedUser() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof AuthenticatedUser user) {
+            return user;
+        }
+        return null;
     }
 }

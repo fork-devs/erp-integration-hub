@@ -41,6 +41,9 @@ spring:
       timeout: 2000ms
 
 erp:
+  security:
+    internal-service-key: ${INTERNAL_SERVICE_KEY:erp_internal_secret_service_key_2026}
+    jwks-url: ${JWKS_URL:http://localhost:8081/.well-known/jwks.json}
   integration:
     apisunat:
       base-url: ${APISUNAT_BASE_URL:https://sandbox.apisunat.pe}

@@ -6,7 +6,9 @@ import com.erp.integrationhub.domain.model.ProviderType;
 import com.erp.integrationhub.domain.model.RetryTask;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
+import com.erp.integrationhub.infrastructure.security.AuthenticatedUser;
 import com.erp.integrationhub.interfaces.rest.advice.GlobalRestExceptionHandler;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,10 +16,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.eq;
@@ -51,6 +57,12 @@ class IntegrationAdminControllerTest {
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalRestExceptionHandler())
                 .build();
+        SecurityContextHolder.clearContext();
+    }
+
+    @AfterEach
+    void tearDown() {
+        SecurityContextHolder.clearContext();
     }
 
     @Test
@@ -70,6 +82,56 @@ class IntegrationAdminControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].provider").value("APISUNAT"))
                 .andExpect(jsonPath("$[0].status").value("OK"));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/integrations/admin/attempts - When header X-Tenant-ID is missing, use authenticated user tenantId")
+    void getAttempts_WithoutHeader_ShouldUseAuthenticatedUserTenant() throws Exception {
+        UUID authenticatedTenantId = UUID.randomUUID();
+        AuthenticatedUser user = new AuthenticatedUser(
+                UUID.randomUUID(),
+                authenticatedTenantId,
+                "admin@taller.pe",
+                Set.of("ROLE_ADMIN"),
+                false
+        );
+
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(user, null, List.of(new SimpleGrantedAuthority("ROLE_ADMIN")))
+        );
+
+        IntegrationAttempt attempt = IntegrationAttempt.ok(authenticatedTenantId, ProviderType.APISUNAT, "EMIT_VOUCHER", UUID.randomUUID(), 1);
+        when(attemptRepositoryPort.findByTenantId(eq(authenticatedTenantId), eq(50)))
+                .thenReturn(List.of(attempt));
+
+        mockMvc.perform(get("/api/v1/integrations/admin/attempts")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].tenantId").value(authenticatedTenantId.toString()));
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/integrations/admin/attempts - Reject cross-tenant access with 403 Forbidden")
+    void getAttempts_WithForbiddenTenantHeader_ShouldReturn403() throws Exception {
+        UUID myTenantId = UUID.randomUUID();
+        UUID foreignTenantId = UUID.randomUUID();
+
+        AuthenticatedUser user = new AuthenticatedUser(
+                UUID.randomUUID(),
+                myTenantId,
+                "admin@taller.pe",
+                Set.of("ROLE_ADMIN"),
+                false
+        );
+
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(user, null, List.of(new SimpleGrantedAuthority("ROLE_ADMIN")))
+        );
+
+        mockMvc.perform(get("/api/v1/integrations/admin/attempts")
+                        .header("X-Tenant-ID", foreignTenantId.toString())
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isForbidden());
     }
 
     @Test

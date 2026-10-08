@@ -15,6 +15,9 @@ spring:
     enabled: false
 
 erp:
+  security:
+    internal-service-key: test_internal_key_123
+    jwks-url: http://localhost:8081/.well-known/jwks.json
   integration:
     apisunat:
       base-url: https://sandbox.apisunat.pe

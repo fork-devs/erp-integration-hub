@@ -1,6 +1,7 @@
 package com.erp.integrationhub.infrastructure.config;
 
 import com.erp.integrationhub.infrastructure.security.InternalServiceAuthenticationFilter;
+import com.erp.integrationhub.infrastructure.security.JwksKeyManager;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,17 +20,17 @@ public class SecurityConfig {
     private String internalServiceKey;
 
     @Bean
-    public InternalServiceAuthenticationFilter internalServiceAuthenticationFilter() {
-        return new InternalServiceAuthenticationFilter(internalServiceKey);
+    public InternalServiceAuthenticationFilter internalServiceAuthenticationFilter(JwksKeyManager jwksKeyManager) {
+        return new InternalServiceAuthenticationFilter(internalServiceKey, jwksKeyManager);
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http, InternalServiceAuthenticationFilter filter) throws Exception {
         http
             .csrf(AbstractHttpConfigurer::disable)
             .cors(AbstractHttpConfigurer::disable)
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .addFilterBefore(internalServiceAuthenticationFilter(), UsernamePasswordAuthenticationFilter.class)
+            .addFilterBefore(filter, UsernamePasswordAuthenticationFilter.class)
             .authorizeHttpRequests(auth -> auth
                 // Public Documentation and Health checks
                 .requestMatchers(

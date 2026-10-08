@@ -1,5 +1,7 @@
 package com.erp.integrationhub.infrastructure.security;
 
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.crypto.RSASSAVerifier;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
 import jakarta.servlet.FilterChain;
@@ -14,6 +16,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.security.interfaces.RSAPublicKey;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
@@ -26,11 +29,13 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(InternalServiceAuthenticationFilter.class);
 
     private final String internalServiceKey;
+    private final JwksKeyManager jwksKeyManager;
 
-    public InternalServiceAuthenticationFilter(String internalServiceKey) {
+    public InternalServiceAuthenticationFilter(String internalServiceKey, JwksKeyManager jwksKeyManager) {
         this.internalServiceKey = (internalServiceKey != null && !internalServiceKey.isBlank())
                 ? internalServiceKey.trim()
                 : "erp_internal_secret_service_key_2026";
+        this.jwksKeyManager = jwksKeyManager;
     }
 
     @Override
@@ -58,16 +63,43 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
                     UUID.randomUUID(),
                     null,
                     "internal-service",
-                    Set.of("ROLE_INTERNAL_SERVICE", "ROLE_ADMIN"),
+                    Set.of("ROLE_INTERNAL_SERVICE", "ROLE_ADMIN", "ROLE_SUPER_ADMIN"),
                     true
             );
         }
-        // 2. Validar Bearer JWT Token
+        // 2. Validar Bearer JWT Token con verificación criptográfica RS256 contra JWKS
         else if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7).trim();
             try {
-                com.nimbusds.jwt.JWT jwt = com.nimbusds.jwt.JWTParser.parse(token);
-                JWTClaimsSet claims = jwt.getJWTClaimsSet();
+                // Parsear estrictamente como SignedJWT (rechaza plain tokens o alg=none)
+                SignedJWT signedJWT = SignedJWT.parse(token);
+
+                // Validar algoritmo RSA
+                if (signedJWT.getHeader().getAlgorithm() == null ||
+                        !JWSAlgorithm.Family.RSA.contains(signedJWT.getHeader().getAlgorithm())) {
+                    log.warn("Rechazando token con algoritmo no permitido: {}", signedJWT.getHeader().getAlgorithm());
+                    sendErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "Algoritmo de firma de token no permitido o inseguro");
+                    return;
+                }
+
+                // Obtener clave pública RSA desde JWKS
+                String keyId = signedJWT.getHeader().getKeyID();
+                RSAPublicKey publicKey = jwksKeyManager != null ? jwksKeyManager.getPublicKey(keyId) : null;
+                if (publicKey == null) {
+                    log.warn("No se encontró clave pública RSA en JWKS para kid: {}", keyId);
+                    sendErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "No se pudo verificar la firma del token: clave pública no disponible");
+                    return;
+                }
+
+                // Verificar firma criptográfica
+                RSASSAVerifier verifier = new RSASSAVerifier(publicKey);
+                if (!signedJWT.verify(verifier)) {
+                    log.warn("Firma criptográfica inválida en token JWT para request {}", request.getRequestURI());
+                    sendErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "Firma criptográfica del token inválida");
+                    return;
+                }
+
+                JWTClaimsSet claims = signedJWT.getJWTClaimsSet();
 
                 Date expirationTime = claims.getExpirationTime();
                 if (expirationTime != null && expirationTime.before(new Date())) {
@@ -97,6 +129,9 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
                             roles.add(roleStr.startsWith("ROLE_") ? roleStr : "ROLE_" + roleStr);
                         }
                     }
+                } else if (claims.getStringClaim("role") != null) {
+                    String singleRole = claims.getStringClaim("role");
+                    roles.add(singleRole.startsWith("ROLE_") ? singleRole : "ROLE_" + singleRole);
                 } else {
                     roles.add("ROLE_USER");
                 }
@@ -104,8 +139,8 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
                 authenticatedUser = new AuthenticatedUser(userId, tenantId, sub, roles, false);
 
             } catch (Exception e) {
-                log.warn("Error al procesar Bearer JWT token: {}", e.getMessage());
-                sendErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "Token JWT inválido o malformado");
+                log.warn("Error al procesar y verificar Bearer JWT token: {}", e.getMessage());
+                sendErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "Token JWT inválido o malformado: " + e.getMessage());
                 return;
             }
         }

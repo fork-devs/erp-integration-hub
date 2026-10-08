@@ -11,5 +11,14 @@ services:
     volumes:
       - erp_integration_pgdata:/var/lib/postgresql/data
 
+  erp-integration-redis:
+    image: redis:7-alpine
+    container_name: erp-integration-redis
+    ports:
+      - "6382:6379"
+    volumes:
+      - erp_integration_redisdata:/data
+
 volumes:
   erp_integration_pgdata:
+  erp_integration_redisdata:

@@ -12,6 +12,9 @@ import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
 import com.erp.integrationhub.domain.port.ValidadorIdentidadPort;
 import com.erp.integrationhub.domain.port.ValidadorVehicularPort;
+import com.erp.integrationhub.domain.port.IdentityCachePort;
+import com.erp.integrationhub.infrastructure.adapter.cache.RedisIdentityCacheAdapter;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.erp.integrationhub.infrastructure.adapter.external.ApiSunatElectronicInvoicingAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.ChequeaPeRucValidationAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.StripePaymentGatewayAdapter;
@@ -99,11 +102,17 @@ public class ApplicationServiceConfig {
     }
 
     @Bean
+    public IdentityCachePort identityCachePort(@Autowired(required = false) org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate) {
+        return new RedisIdentityCacheAdapter(redisTemplate);
+    }
+
+    @Bean
     public IdentityValidationService identityValidationService(
             ValidadorIdentidadPort validadorIdentidadPort,
             ValidadorVehicularPort validadorVehicularPort,
+            IdentityCachePort identityCachePort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort) {
-        return new IdentityValidationService(validadorIdentidadPort, validadorVehicularPort, attemptRepositoryPort);
+        return new IdentityValidationService(validadorIdentidadPort, validadorVehicularPort, identityCachePort, attemptRepositoryPort);
     }
 
     @Bean

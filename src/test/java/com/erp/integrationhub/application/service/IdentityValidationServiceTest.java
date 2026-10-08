@@ -6,9 +6,11 @@ import com.erp.integrationhub.application.dto.result.PlacaResult;
 import com.erp.integrationhub.application.dto.result.RucResult;
 import com.erp.integrationhub.domain.model.ConsultaPlacaResult;
 import com.erp.integrationhub.domain.model.ConsultaRucResult;
+import com.erp.integrationhub.domain.port.IdentityCachePort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.ValidadorIdentidadPort;
 import com.erp.integrationhub.domain.port.ValidadorVehicularPort;
+import com.erp.integrationhub.infrastructure.adapter.cache.RedisIdentityCacheAdapter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -46,9 +48,11 @@ class IdentityValidationServiceTest {
 
     @BeforeEach
     void setUp() {
+        IdentityCachePort identityCachePort = new RedisIdentityCacheAdapter(null);
         identityValidationService = new IdentityValidationService(
                 validadorIdentidadPort,
                 validadorVehicularPort,
+                identityCachePort,
                 attemptRepositoryPort
         );
     }

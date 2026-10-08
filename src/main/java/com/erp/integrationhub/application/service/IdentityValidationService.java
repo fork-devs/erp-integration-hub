@@ -10,15 +10,14 @@ import com.erp.integrationhub.domain.model.ConsultaPlacaResult;
 import com.erp.integrationhub.domain.model.ConsultaRucResult;
 import com.erp.integrationhub.domain.model.IntegrationAttempt;
 import com.erp.integrationhub.domain.model.ProviderType;
+import com.erp.integrationhub.domain.port.IdentityCachePort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.ValidadorIdentidadPort;
 import com.erp.integrationhub.domain.port.ValidadorVehicularPort;
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.Duration;
+import java.util.Optional;
 import java.util.UUID;
 
 public class IdentityValidationService implements ConsultarRucUseCase, ConsultarPlacaUseCase {
@@ -27,29 +26,18 @@ public class IdentityValidationService implements ConsultarRucUseCase, Consultar
 
     private final ValidadorIdentidadPort validadorIdentidadPort;
     private final ValidadorVehicularPort validadorVehicularPort;
+    private final IdentityCachePort identityCachePort;
     private final IntegrationAttemptRepositoryPort attemptRepositoryPort;
-
-    // Caché con TTL: RUC (30 días), Placas (7 días) según QA-6 / doc-microservices.md
-    private final Cache<String, ConsultaRucResult> rucCache;
-    private final Cache<String, ConsultaPlacaResult> placaCache;
 
     public IdentityValidationService(
             ValidadorIdentidadPort validadorIdentidadPort,
             ValidadorVehicularPort validadorVehicularPort,
+            IdentityCachePort identityCachePort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort) {
         this.validadorIdentidadPort = validadorIdentidadPort;
         this.validadorVehicularPort = validadorVehicularPort;
+        this.identityCachePort = identityCachePort;
         this.attemptRepositoryPort = attemptRepositoryPort;
-
-        this.rucCache = Caffeine.newBuilder()
-                .expireAfterWrite(Duration.ofDays(30))
-                .maximumSize(50000)
-                .build();
-
-        this.placaCache = Caffeine.newBuilder()
-                .expireAfterWrite(Duration.ofDays(7))
-                .maximumSize(50000)
-                .build();
     }
 
     @Override
@@ -59,19 +47,19 @@ public class IdentityValidationService implements ConsultarRucUseCase, Consultar
         }
 
         String ruc = command.ruc().trim();
-        ConsultaRucResult cached = rucCache.getIfPresent(ruc);
-        if (cached != null) {
-            log.debug("RUC {} encontrado en caché local", ruc);
-            return toRucResult(cached, true);
+        Optional<ConsultaRucResult> cached = identityCachePort != null ? identityCachePort.getRuc(ruc) : Optional.empty();
+        if (cached.isPresent()) {
+            log.debug("RUC {} obtenido de la caché (Redis / L1)", ruc);
+            return toRucResult(cached.get(), true);
         }
 
         ConsultaRucResult result;
         try {
             result = validadorIdentidadPort.consultarRuc(ruc);
-            if (result.esValido()) {
-                rucCache.put(ruc, result);
+            if (result.esValido() && identityCachePort != null) {
+                identityCachePort.putRuc(ruc, result);
             }
-            logAttempt(command.tenantId(), ProviderType.RENIEC_SUNAT, "VALIDATE_RUC", null);
+            logAttempt(command.tenantId(), ProviderType.CHEQUEA, "VALIDATE_RUC", null);
         } catch (Exception e) {
             log.warn("Fallo al validar RUC {} con proveedor externo: {}", ruc, e.getMessage());
             result = ConsultaRucResult.invalido(ruc);
@@ -87,17 +75,17 @@ public class IdentityValidationService implements ConsultarRucUseCase, Consultar
         }
 
         String placa = command.placa().trim().toUpperCase().replace("-", "");
-        ConsultaPlacaResult cached = placaCache.getIfPresent(placa);
-        if (cached != null) {
-            log.debug("Placa {} encontrada en caché local", placa);
-            return toPlacaResult(cached, true);
+        Optional<ConsultaPlacaResult> cached = identityCachePort != null ? identityCachePort.getPlaca(placa) : Optional.empty();
+        if (cached.isPresent()) {
+            log.debug("Placa {} obtenida de la caché (Redis / L1)", placa);
+            return toPlacaResult(cached.get(), true);
         }
 
         ConsultaPlacaResult result;
         try {
             result = validadorVehicularPort.consultarPlaca(placa);
-            if (result.esValido()) {
-                placaCache.put(placa, result);
+            if (result.esValido() && identityCachePort != null) {
+                identityCachePort.putPlaca(placa, result);
             }
             logAttempt(command.tenantId(), ProviderType.SUNARP, "VALIDATE_PLATE", null);
         } catch (Exception e) {

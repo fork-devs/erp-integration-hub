@@ -12,6 +12,7 @@ import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
 import com.erp.integrationhub.domain.port.ValidadorIdentidadPort;
 import com.erp.integrationhub.domain.port.ValidadorVehicularPort;
+import com.erp.integrationhub.infrastructure.adapter.external.ChequeaPeRucValidationAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.NubefactElectronicInvoicingAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.StripePaymentGatewayAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.SunarpVehicleValidationAdapter;
@@ -46,6 +47,15 @@ public class ApplicationServiceConfig {
     @Value("${erp.integration.stripe.sandbox-mode:true}")
     private boolean stripeSandboxMode;
 
+    @Value("${erp.integration.chequea.base-url:https://api.chequea.pe/v1}")
+    private String chequeaBaseUrl;
+
+    @Value("${erp.integration.chequea.token:sandbox_chequea_token}")
+    private String chequeaToken;
+
+    @Value("${erp.integration.chequea.sandbox-mode:true}")
+    private boolean chequeaSandboxMode;
+
     @Value("${erp.integration.apiperu.base-url:https://apiperu.dev/api}")
     private String apiperuBaseUrl;
 
@@ -67,7 +77,7 @@ public class ApplicationServiceConfig {
 
     @Bean
     public ValidadorIdentidadPort validadorIdentidadPort() {
-        return new SunatReniecValidationAdapter(apiperuBaseUrl, apiperuToken, apiperuSandboxMode);
+        return new ChequeaPeRucValidationAdapter(chequeaBaseUrl, chequeaToken, chequeaSandboxMode);
     }
 
     @Bean

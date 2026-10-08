@@ -44,6 +44,10 @@ erp:
       api-key: ${STRIPE_API_KEY:sk_test_mock_stripe_key}
       webhook-secret: ${STRIPE_WEBHOOK_SECRET:whsec_test_mock_secret}
       sandbox-mode: ${STRIPE_SANDBOX_MODE:true}
+    chequea:
+      base-url: ${CHEQUEA_BASE_URL:https://api.chequea.pe/v1}
+      token: ${CHEQUEA_TOKEN:sandbox_chequea_token}
+      sandbox-mode: ${CHEQUEA_SANDBOX_MODE:true}
     apiperu:
       base-url: ${APIPERU_BASE_URL:https://apiperu.dev/api}
       token: ${APIPERU_TOKEN:sandbox_apiperu_token}

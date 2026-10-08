@@ -25,6 +25,10 @@ erp:
       api-key: sk_test_mock
       webhook-secret: whsec_test_mock
       sandbox-mode: true
+    chequea:
+      base-url: https://api.chequea.pe/v1
+      token: test_token
+      sandbox-mode: true
     apiperu:
       base-url: https://apiperu.dev/api
       token: test_token

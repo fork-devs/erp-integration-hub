@@ -76,4 +76,39 @@ public class ElectronicInvoicingController {
         ComprobanteResult result = emitirComprobanteUseCase.emitirComprobante(command);
         return ResponseEntity.ok(ComprobanteResponse.fromResult(result));
     }
+
+    @PostMapping("/void")
+    @Operation(summary = "Void/cancel electronic invoice, note or boleta via APISUNAT", description = "Dispatches communication of voiding (/api/v3/voided) or daily summary (/api/v3/daily-summary) to SUNAT")
+    public ResponseEntity<ComprobanteResponse> voidInvoice(
+            @RequestHeader("X-Tenant-ID") UUID tenantId,
+            @Valid @RequestBody com.erp.integrationhub.interfaces.rest.request.AnularComprobanteRequest request) {
+
+        UUID compId = request.comprobanteId() != null ? request.comprobanteId() : UUID.randomUUID();
+        ComprobanteResult result = emitirComprobanteUseCase.anularComprobante(
+                tenantId,
+                compId,
+                request.tipo(),
+                request.serie(),
+                request.numero(),
+                request.motivo()
+        );
+        return ResponseEntity.ok(ComprobanteResponse.fromResult(result));
+    }
+
+    @PostMapping("/status")
+    @Operation(summary = "Query document status in SUNAT via APISUNAT", description = "Retrieves current status, hash, XML, CDR, and PDF links (/api/v3/status)")
+    public ResponseEntity<ComprobanteResponse> checkStatus(
+            @RequestHeader("X-Tenant-ID") UUID tenantId,
+            @Valid @RequestBody com.erp.integrationhub.interfaces.rest.request.ConsultarEstadoComprobanteRequest request) {
+
+        UUID compId = request.comprobanteId() != null ? request.comprobanteId() : UUID.randomUUID();
+        ComprobanteResult result = emitirComprobanteUseCase.consultarEstadoComprobante(
+                tenantId,
+                compId,
+                request.tipo(),
+                request.serie(),
+                request.numero()
+        );
+        return ResponseEntity.ok(ComprobanteResponse.fromResult(result));
+    }
 }

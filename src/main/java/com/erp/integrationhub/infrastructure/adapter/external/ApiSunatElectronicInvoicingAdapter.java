@@ -96,6 +96,53 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
     }
 
     @Override
+    public ResultadoDeclaracion anularComprobante(String tipo, String serie, int numero, String motivo) {
+        log.info("[APISUNAT ACL] Solicitando anulación/baja de {} {}-{} por motivo: {}", tipo, serie, numero, motivo);
+
+        if (sandboxMode && (token.contains("mock") || token.contains("sandbox") || token.isBlank())) {
+            return ResultadoDeclaracion.anulado("0", "El comprobante fue dado de baja exitosamente en SUNAT.", "BAJA-" + UUID.randomUUID().toString().substring(0, 8));
+        }
+
+        try {
+            boolean isBoleta = tipo != null && tipo.toLowerCase().contains("boleta");
+            String endpoint = isBoleta ? "api/v3/daily-summary" : "api/v3/voided";
+            String targetUrl = baseUrl.endsWith("/") ? baseUrl + endpoint : baseUrl + "/" + endpoint;
+
+            String docTipo = tipo != null ? tipo.toLowerCase().replace(" ", "_") : "factura";
+            String requestJson = isBoleta
+                    ? String.format("{\"documento\":\"boleta\",\"serie\":\"%s\",\"numero\":%d,\"motivo\":\"%s\",\"accion\":\"anulacion\"}",
+                            serie, numero, escapeJson(motivo))
+                    : String.format("{\"documento\":\"%s\",\"serie\":\"%s\",\"numero\":%d,\"motivo\":\"%s\"}",
+                            docTipo, serie, numero, escapeJson(motivo));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(targetUrl))
+                    .timeout(Duration.ofSeconds(15))
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + token)
+                    .POST(HttpRequest.BodyPublishers.ofString(requestJson))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            log.info("[APISUNAT ACL] Respuesta baja HTTP {}: {}", response.statusCode(), response.body());
+
+            if (response.statusCode() == 200 || response.statusCode() == 201) {
+                String msg = extractJsonString(response.body(), "message");
+                String hash = extractJsonString(response.body(), "hash");
+                return ResultadoDeclaracion.anulado("0", msg != null ? msg : "Comprobante dado de baja con éxito", hash);
+            } else {
+                String errorMsg = extractJsonString(response.body(), "message");
+                if (errorMsg == null) errorMsg = response.body();
+                log.warn("[APISUNAT ACL] Error en anulación APISUNAT (HTTP {}): {}", response.statusCode(), errorMsg);
+                return ResultadoDeclaracion.rechazado(String.valueOf(response.statusCode()), errorMsg);
+            }
+        } catch (Exception e) {
+            log.error("[APISUNAT ACL] Fallo al anular comprobante en APISUNAT: {}", e.getMessage());
+            throw new ProviderUnavailableException("Error conectando con APISUNAT para anulación: " + e.getMessage());
+        }
+    }
+
+    @Override
     public ResultadoDeclaracion consultarEstadoComprobante(String tipo, String serie, int numero) {
         if (sandboxMode && (token.contains("mock") || token.contains("sandbox") || token.isBlank())) {
             return ResultadoDeclaracion.aceptado("0", "El comprobante fue enviado y aceptado por SUNAT.", null, null, null, null);

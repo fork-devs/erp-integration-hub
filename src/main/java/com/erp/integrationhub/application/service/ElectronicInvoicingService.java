@@ -23,6 +23,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
@@ -147,6 +148,71 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
         ));
 
         return finalResult;
+    }
+
+    @Override
+    public ComprobanteResult anularComprobante(UUID tenantId, UUID comprobanteId, String tipo, String serie, int numero, String motivo) {
+        if (tenantId == null || comprobanteId == null) {
+            throw new IllegalArgumentException("tenantId y comprobanteId son obligatorios");
+        }
+        log.info("[APISUNAT] Anulando comprobante {} {}-{} para tenant {}", tipo, serie, numero, tenantId);
+
+        ResultadoDeclaracion resultado;
+        try {
+            resultado = emisorTributarioPort.anularComprobante(tipo, serie, numero, motivo);
+            attemptRepositoryPort.save(IntegrationAttempt.ok(
+                    tenantId,
+                    ProviderType.APISUNAT,
+                    "VOID_VOUCHER",
+                    comprobanteId,
+                    1
+            ));
+        } catch (Exception e) {
+            log.warn("Error al anular comprobante en APISUNAT ({}): {}", comprobanteId, e.getMessage());
+            resultado = ResultadoDeclaracion.rechazado("500", "Fallo al comunicar anulación con APISUNAT: " + e.getMessage());
+        }
+
+        return new ComprobanteResult(
+                comprobanteId,
+                resultado.exitoso(),
+                resultado.estadoSunat(),
+                resultado.codigoRespuestaSunat(),
+                resultado.mensajeSunat(),
+                resultado.pdfUrl(),
+                resultado.xmlUrl(),
+                resultado.cdrUrl(),
+                resultado.hashCdr(),
+                false
+        );
+    }
+
+    @Override
+    public ComprobanteResult consultarEstadoComprobante(UUID tenantId, UUID comprobanteId, String tipo, String serie, int numero) {
+        if (tenantId == null || comprobanteId == null) {
+            throw new IllegalArgumentException("tenantId y comprobanteId son obligatorios");
+        }
+        log.info("[APISUNAT] Consultando estado de comprobante {} {}-{} para tenant {}", tipo, serie, numero, tenantId);
+
+        ResultadoDeclaracion resultado;
+        try {
+            resultado = emisorTributarioPort.consultarEstadoComprobante(tipo, serie, numero);
+        } catch (Exception e) {
+            log.warn("Error al consultar estado en APISUNAT ({}): {}", comprobanteId, e.getMessage());
+            resultado = ResultadoDeclaracion.rechazado("500", "Fallo al consultar estado con APISUNAT: " + e.getMessage());
+        }
+
+        return new ComprobanteResult(
+                comprobanteId,
+                resultado.exitoso(),
+                resultado.estadoSunat(),
+                resultado.codigoRespuestaSunat(),
+                resultado.mensajeSunat(),
+                resultado.pdfUrl(),
+                resultado.xmlUrl(),
+                resultado.cdrUrl(),
+                resultado.hashCdr(),
+                false
+        );
     }
 
     private ItemComprobante toItemModel(ItemComprobanteCommand cmd) {

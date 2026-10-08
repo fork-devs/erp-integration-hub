@@ -93,4 +93,82 @@ class ElectronicInvoicingControllerTest {
                 .andExpect(jsonPath("$.estadoSunat").value("ACEPTADA"))
                 .andExpect(jsonPath("$.pdfUrl").value("https://storage.pe/f001-1.pdf"));
     }
+
+    @Test
+    @DisplayName("POST /api/v1/integrations/invoices/void - Should return 200 OK with voided response")
+    void voidInvoice_WhenValidRequest_ShouldReturn200() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        UUID comprobanteId = UUID.randomUUID();
+
+        ComprobanteResult mockResult = new ComprobanteResult(
+                comprobanteId,
+                true,
+                "ANULADO",
+                "0",
+                "Comprobante dado de baja exitosamente",
+                null,
+                null,
+                null,
+                "HASH_VOID_123",
+                false
+        );
+        when(emitirComprobanteUseCase.anularComprobante(any(), any(), any(), any(), any(Integer.class), any())).thenReturn(mockResult);
+
+        String jsonPayload = """
+                {
+                    "comprobanteId": "%s",
+                    "tipo": "factura",
+                    "serie": "F001",
+                    "numero": 100,
+                    "motivo": "Error en digitacion"
+                }
+                """.formatted(comprobanteId);
+
+        mockMvc.perform(post("/api/v1/integrations/invoices/void")
+                        .header("X-Tenant-ID", tenantId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(jsonPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.exitoso").value(true))
+                .andExpect(jsonPath("$.estadoSunat").value("ANULADO"));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/integrations/invoices/status - Should return 200 OK with current document status")
+    void checkStatus_WhenValidRequest_ShouldReturn200() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        UUID comprobanteId = UUID.randomUUID();
+
+        ComprobanteResult mockResult = new ComprobanteResult(
+                comprobanteId,
+                true,
+                "ACEPTADO",
+                "0",
+                "Comprobante aceptado por SUNAT",
+                "https://storage.pe/f001-100.pdf",
+                "https://storage.pe/f001-100.xml",
+                "https://storage.pe/r-f001-100.xml",
+                "HASH_CDR_100",
+                false
+        );
+        when(emitirComprobanteUseCase.consultarEstadoComprobante(any(), any(), any(), any(), any(Integer.class))).thenReturn(mockResult);
+
+        String jsonPayload = """
+                {
+                    "comprobanteId": "%s",
+                    "tipo": "factura",
+                    "serie": "F001",
+                    "numero": 100
+                }
+                """.formatted(comprobanteId);
+
+        mockMvc.perform(post("/api/v1/integrations/invoices/status")
+                        .header("X-Tenant-ID", tenantId.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(jsonPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.exitoso").value(true))
+                .andExpect(jsonPath("$.estadoSunat").value("ACEPTADO"))
+                .andExpect(jsonPath("$.pdfUrl").value("https://storage.pe/f001-100.pdf"));
+    }
 }

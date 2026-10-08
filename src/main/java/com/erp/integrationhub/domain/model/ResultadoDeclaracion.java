@@ -23,4 +23,8 @@ public record ResultadoDeclaracion(
     public static ResultadoDeclaracion rechazado(String codigo, String mensaje) {
         return new ResultadoDeclaracion(false, "RECHAZADO", codigo, mensaje, null, null, null, null);
     }
+
+    public static ResultadoDeclaracion anulado(String codigo, String mensaje, String hashTicket) {
+        return new ResultadoDeclaracion(true, "ANULADO", codigo, mensaje, null, null, null, hashTicket);
+    }
 }

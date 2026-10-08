@@ -45,6 +45,16 @@ public class GlobalRestExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(com.erp.integrationhub.domain.exception.TenantAccessDeniedException.class)
+    public ProblemDetail handleTenantAccessDenied(com.erp.integrationhub.domain.exception.TenantAccessDeniedException ex) {
+        log.warn("Tenant access denied / isolation violation: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, ex.getMessage());
+        problem.setTitle("Tenant Access Forbidden");
+        problem.setType(URI.create("https://erp-automotive.pe/errors/tenant-access-forbidden"));
+        problem.setProperty("timestamp", Instant.now());
+        return problem;
+    }
+
     @ExceptionHandler(ProviderUnavailableException.class)
     public ProblemDetail handleProviderUnavailable(ProviderUnavailableException ex) {
         log.error("Provider unavailable: {}", ex.getMessage());

@@ -41,19 +41,37 @@ class WebhookProcessingServiceTest {
     }
 
     @Test
-    @DisplayName("Should verify valid HMAC-SHA256 signature and process webhook")
-    void processWebhook_WithValidSignature_ShouldSucceed() throws Exception {
+    @DisplayName("Should verify valid Stripe timestamped signature (t=...,v1=...) and process webhook")
+    void processWebhook_WithValidStripeSignature_ShouldSucceed() throws Exception {
         String payload = "{\"event\":\"payment_intent.succeeded\",\"id\":\"pi_123\"}";
+        long timestamp = java.time.Instant.now().getEpochSecond();
+        String signedPayload = timestamp + "." + payload;
+
+        Mac hmac = Mac.getInstance("HmacSHA256");
+        SecretKeySpec key = new SecretKeySpec(secretKey.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+        hmac.init(key);
+        String hex = HexFormat.of().formatHex(hmac.doFinal(signedPayload.getBytes(StandardCharsets.UTF_8)));
+        String stripeHeader = "t=" + timestamp + ",v1=" + hex;
+
+        boolean result = webhookProcessingService.processWebhook(ProviderType.STRIPE, payload, stripeHeader);
+
+        assertTrue(result);
+        verify(attemptRepositoryPort).save(any());
+    }
+
+    @Test
+    @DisplayName("Should verify valid standard HMAC-SHA256 signature for APISUNAT and process webhook")
+    void processWebhook_WithValidApiSunatSignature_ShouldSucceed() throws Exception {
+        String payload = "{\"documento\":\"factura\",\"serie\":\"F001\",\"numero\":100}";
 
         Mac hmac = Mac.getInstance("HmacSHA256");
         SecretKeySpec key = new SecretKeySpec(secretKey.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
         hmac.init(key);
         String validSignature = HexFormat.of().formatHex(hmac.doFinal(payload.getBytes(StandardCharsets.UTF_8)));
 
-        boolean result = webhookProcessingService.processWebhook(ProviderType.STRIPE, payload, validSignature);
+        boolean result = webhookProcessingService.processWebhook(ProviderType.APISUNAT, payload, validSignature);
 
         assertTrue(result);
-        verify(attemptRepositoryPort).save(any());
     }
 
     @Test

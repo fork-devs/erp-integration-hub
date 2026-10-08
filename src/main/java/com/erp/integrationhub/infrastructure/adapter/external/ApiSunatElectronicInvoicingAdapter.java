@@ -6,6 +6,10 @@ import com.erp.integrationhub.domain.model.ItemComprobante;
 import com.erp.integrationhub.domain.model.Moneda;
 import com.erp.integrationhub.domain.model.ResultadoDeclaracion;
 import com.erp.integrationhub.domain.port.EmisorTributarioPort;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,7 +22,6 @@ import java.time.Duration;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort {
 
@@ -28,6 +31,7 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
     private final String token;
     private final boolean sandboxMode;
     private final HttpClient httpClient;
+    private final ObjectMapper objectMapper;
 
     public ApiSunatElectronicInvoicingAdapter(String baseUrl, String token, boolean sandboxMode) {
         this.baseUrl = (baseUrl != null && !baseUrl.isBlank()) ? baseUrl.trim() : "https://sandbox.apisunat.pe";
@@ -37,6 +41,7 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
                 .version(HttpClient.Version.HTTP_2)
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
+        this.objectMapper = new ObjectMapper();
     }
 
     @Override
@@ -83,9 +88,8 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
             if (response.statusCode() == 200 || response.statusCode() == 201) {
                 return parseApiSunatSuccessResponse(response.body());
             } else {
-                String errorMsg = extractJsonString(response.body(), "message");
-                if (errorMsg == null) errorMsg = response.body();
-                log.warn("[APISUNAT ACL] Error devuelto por APISUNAT/SUNAT: {}", errorMsg);
+                String errorMsg = extractMessageFromJson(response.body());
+                log.warn("[APISUNAT ACL] Error devuelto por APISUNAT/SUNAT (HTTP {}): {}", response.statusCode(), errorMsg);
                 return ResultadoDeclaracion.rechazado(String.valueOf(response.statusCode()), errorMsg);
             }
 
@@ -108,12 +112,17 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
             String endpoint = isBoleta ? "api/v3/daily-summary" : "api/v3/voided";
             String targetUrl = baseUrl.endsWith("/") ? baseUrl + endpoint : baseUrl + "/" + endpoint;
 
-            String docTipo = tipo != null ? tipo.toLowerCase().replace(" ", "_") : "factura";
-            String requestJson = isBoleta
-                    ? String.format("{\"documento\":\"boleta\",\"serie\":\"%s\",\"numero\":%d,\"motivo\":\"%s\",\"accion\":\"anulacion\"}",
-                            serie, numero, escapeJson(motivo))
-                    : String.format("{\"documento\":\"%s\",\"serie\":\"%s\",\"numero\":%d,\"motivo\":\"%s\"}",
-                            docTipo, serie, numero, escapeJson(motivo));
+            ObjectNode root = objectMapper.createObjectNode();
+            String docTipo = isBoleta ? "boleta" : (tipo != null ? tipo.toLowerCase().replace(" ", "_") : "factura");
+            root.put("documento", docTipo);
+            root.put("serie", serie);
+            root.put("numero", numero);
+            root.put("motivo", motivo != null ? motivo : "Anulación solicitada");
+            if (isBoleta) {
+                root.put("accion", "anulacion");
+            }
+
+            String requestJson = objectMapper.writeValueAsString(root);
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(targetUrl))
@@ -127,12 +136,12 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
             log.info("[APISUNAT ACL] Respuesta baja HTTP {}: {}", response.statusCode(), response.body());
 
             if (response.statusCode() == 200 || response.statusCode() == 201) {
-                String msg = extractJsonString(response.body(), "message");
-                String hash = extractJsonString(response.body(), "hash");
-                return ResultadoDeclaracion.anulado("0", msg != null ? msg : "Comprobante dado de baja con éxito", hash);
+                JsonNode resNode = objectMapper.readTree(response.body());
+                String msg = resNode.path("message").asText("Comprobante dado de baja con éxito");
+                String hash = resNode.path("payload").path("hash").asText(resNode.path("hash").asText(null));
+                return ResultadoDeclaracion.anulado("0", msg, hash);
             } else {
-                String errorMsg = extractJsonString(response.body(), "message");
-                if (errorMsg == null) errorMsg = response.body();
+                String errorMsg = extractMessageFromJson(response.body());
                 log.warn("[APISUNAT ACL] Error en anulación APISUNAT (HTTP {}): {}", response.statusCode(), errorMsg);
                 return ResultadoDeclaracion.rechazado(String.valueOf(response.statusCode()), errorMsg);
             }
@@ -151,7 +160,13 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
         try {
             String targetUrl = baseUrl.endsWith("/") ? baseUrl + "api/v3/status" : baseUrl + "/api/v3/status";
             String docTipo = tipo != null ? tipo.toLowerCase() : "factura";
-            String requestJson = String.format("{\"documento\":\"%s\",\"serie\":\"%s\",\"numero\":%d}", docTipo, serie, numero);
+
+            ObjectNode root = objectMapper.createObjectNode();
+            root.put("documento", docTipo);
+            root.put("serie", serie);
+            root.put("numero", numero);
+
+            String requestJson = objectMapper.writeValueAsString(root);
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(targetUrl))
@@ -169,7 +184,9 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
         }
     }
 
-    private String buildApiSunatJsonPayload(ComprobanteParaDeclarar c) {
+    private String buildApiSunatJsonPayload(ComprobanteParaDeclarar c) throws Exception {
+        ObjectNode root = objectMapper.createObjectNode();
+
         String documento = switch (c.getTipo()) {
             case FACTURA -> "factura";
             case BOLETA -> "boleta";
@@ -183,107 +200,91 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
                 : java.time.LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
         String horaStr = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
 
-        String itemsJson = c.getItems().stream()
-                .map(this::buildItemJson)
-                .collect(Collectors.joining(","));
+        root.put("documento", documento);
+        root.put("serie", c.getSerie());
+        root.put("numero", c.getNumero());
+        root.put("fecha_de_emision", fechaStr);
+        root.put("hora_de_emision", horaStr);
+        root.put("moneda", moneda);
+        root.put("tipo_operacion", "0101");
+        root.put("cliente_tipo_de_documento", c.getClienteTipoDoc());
+        root.put("cliente_numero_de_documento", c.getClienteNumDoc());
+        root.put("cliente_denominacion", c.getClienteDenominacion() != null ? c.getClienteDenominacion() : "");
+        root.put("cliente_direccion", c.getClienteDireccion() != null ? c.getClienteDireccion() : "");
 
-        return String.format("""
-                {
-                    "documento": "%s",
-                    "serie": "%s",
-                    "numero": %d,
-                    "fecha_de_emision": "%s",
-                    "hora_de_emision": "%s",
-                    "moneda": "%s",
-                    "tipo_operacion": "0101",
-                    "cliente_tipo_de_documento": "%s",
-                    "cliente_numero_de_documento": "%s",
-                    "cliente_denominacion": "%s",
-                    "cliente_direccion": "%s",
-                    "items": [%s],
-                    "total": "%s"
-                }
-                """,
-                documento,
-                c.getSerie(),
-                c.getNumero(),
-                fechaStr,
-                horaStr,
-                moneda,
-                c.getClienteTipoDoc(),
-                c.getClienteNumDoc(),
-                escapeJson(c.getClienteDenominacion()),
-                c.getClienteDireccion() != null ? escapeJson(c.getClienteDireccion()) : "",
-                itemsJson,
-                c.getTotal().setScale(2, RoundingMode.HALF_UP).toPlainString()
-        );
-    }
+        ArrayNode itemsArray = root.putArray("items");
+        for (ItemComprobante item : c.getItems()) {
+            ObjectNode itemNode = itemsArray.addObject();
+            itemNode.put("unidad_de_medida", item.unidadMedida() != null ? item.unidadMedida() : "NIU");
+            itemNode.put("descripcion", item.descripcion());
+            itemNode.put("cantidad", item.cantidad().setScale(2, RoundingMode.HALF_UP).toPlainString());
+            itemNode.put("valor_unitario", item.valorUnitario().setScale(6, RoundingMode.HALF_UP).toPlainString());
+            itemNode.put("porcentaje_igv", "18");
+            itemNode.put("codigo_tipo_afectacion_igv", "10");
+            itemNode.put("nombre_tributo", "IGV");
+        }
 
-    private String buildItemJson(ItemComprobante i) {
-        return String.format("""
-                {
-                    "unidad_de_medida": "%s",
-                    "descripcion": "%s",
-                    "cantidad": "%s",
-                    "valor_unitario": "%s",
-                    "porcentaje_igv": "18",
-                    "codigo_tipo_afectacion_igv": "10",
-                    "nombre_tributo": "IGV"
-                }
-                """,
-                i.unidadMedida() != null ? i.unidadMedida() : "NIU",
-                escapeJson(i.descripcion()),
-                i.cantidad().setScale(2, RoundingMode.HALF_UP).toPlainString(),
-                i.valorUnitario().setScale(6, RoundingMode.HALF_UP).toPlainString()
-        );
+        root.put("total", c.getTotal().setScale(2, RoundingMode.HALF_UP).toPlainString());
+
+        return objectMapper.writeValueAsString(root);
     }
 
     private ResultadoDeclaracion parseApiSunatSuccessResponse(String json) {
-        String estado = extractJsonString(json, "estado");
-        String message = extractJsonString(json, "message");
-        if (message == null) message = "Comprobante procesado por APISUNAT";
+        try {
+            JsonNode root = objectMapper.readTree(json);
+            JsonNode payloadNode = root.path("payload");
 
-        String hash = extractJsonString(json, "hash");
-        String xml = extractJsonString(json, "xml");
-        String cdr = extractJsonString(json, "cdr");
-        String pdf = extractNestedJsonString(json, "pdf", "a4");
-        if (pdf == null) pdf = extractNestedJsonString(json, "pdf", "ticket");
+            String estado = payloadNode.hasNonNull("estado")
+                    ? payloadNode.get("estado").asText()
+                    : root.path("estado").asText("ACEPTADO");
 
-        if ("ACEPTADO".equalsIgnoreCase(estado)) {
-            return ResultadoDeclaracion.aceptado("0", message, pdf, xml, cdr, hash);
-        } else if ("PENDIENTE".equalsIgnoreCase(estado)) {
-            return ResultadoDeclaracion.pendiente(message);
-        } else {
-            return ResultadoDeclaracion.rechazado("400", message);
+            String message = root.path("message").asText("Comprobante procesado por APISUNAT");
+
+            String hash = payloadNode.hasNonNull("hash")
+                    ? payloadNode.get("hash").asText()
+                    : root.path("hash").asText(null);
+
+            String xml = payloadNode.hasNonNull("xml")
+                    ? payloadNode.get("xml").asText()
+                    : root.path("xml").asText(null);
+
+            String cdr = payloadNode.hasNonNull("cdr")
+                    ? payloadNode.get("cdr").asText()
+                    : root.path("cdr").asText(null);
+
+            String pdf = null;
+            if (payloadNode.hasNonNull("pdf")) {
+                JsonNode pdfNode = payloadNode.get("pdf");
+                if (pdfNode.isTextual()) {
+                    pdf = pdfNode.asText();
+                } else {
+                    pdf = pdfNode.path("a4").asText(pdfNode.path("ticket").asText(null));
+                }
+            } else if (root.hasNonNull("pdf")) {
+                pdf = root.path("pdf").asText(null);
+            }
+
+            if ("ACEPTADO".equalsIgnoreCase(estado)) {
+                return ResultadoDeclaracion.aceptado("0", message, pdf, xml, cdr, hash);
+            } else if ("PENDIENTE".equalsIgnoreCase(estado)) {
+                return ResultadoDeclaracion.pendiente(message);
+            } else {
+                return ResultadoDeclaracion.rechazado("400", message);
+            }
+        } catch (Exception e) {
+            log.warn("[APISUNAT ACL] Error al parsear respuesta JSON de APISUNAT: {}", e.getMessage());
+            return ResultadoDeclaracion.rechazado("500", "Respuesta no estructurada de APISUNAT: " + json);
         }
     }
 
-    private String extractJsonString(String json, String key) {
-        if (json == null) return null;
-        String pattern = "\"" + key + "\":\"";
-        int start = json.indexOf(pattern);
-        if (start != -1) {
-            start += pattern.length();
-            int end = json.indexOf("\"", start);
-            if (end != -1) return json.substring(start, end);
-        }
-        return null;
-    }
-
-    private String extractNestedJsonString(String json, String parentKey, String childKey) {
-        if (json == null) return null;
-        int parentStart = json.indexOf("\"" + parentKey + "\"");
-        if (parentStart == -1) return null;
-        int childStart = json.indexOf("\"" + childKey + "\":\"", parentStart);
-        if (childStart == -1) return null;
-        childStart += ("\"" + childKey + "\":\"").length();
-        int childEnd = json.indexOf("\"", childStart);
-        if (childEnd != -1) return json.substring(childStart, childEnd);
-        return null;
-    }
-
-    private String escapeJson(String text) {
-        if (text == null) return "";
-        return text.replace("\"", "\\\"").replace("\n", " ").replace("\r", "");
+    private String extractMessageFromJson(String json) {
+        if (json == null || json.isBlank()) return "Sin detalle de error";
+        try {
+            JsonNode node = objectMapper.readTree(json);
+            if (node.hasNonNull("message")) {
+                return node.get("message").asText();
+            }
+        } catch (Exception ignored) {}
+        return json;
     }
 }

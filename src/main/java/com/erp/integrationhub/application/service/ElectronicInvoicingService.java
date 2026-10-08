@@ -18,6 +18,7 @@ import com.erp.integrationhub.domain.port.EmisorTributarioPort;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,6 +35,7 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
     private final IdempotencyRepositoryPort idempotencyRepositoryPort;
     private final IntegrationAttemptRepositoryPort attemptRepositoryPort;
     private final RetryQueueRepositoryPort retryQueueRepositoryPort;
+    private final ObjectMapper objectMapper;
 
     public ElectronicInvoicingService(
             EmisorTributarioPort emisorTributarioPort,
@@ -44,6 +46,7 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
         this.idempotencyRepositoryPort = idempotencyRepositoryPort;
         this.attemptRepositoryPort = attemptRepositoryPort;
         this.retryQueueRepositoryPort = retryQueueRepositoryPort;
+        this.objectMapper = new ObjectMapper().findAndRegisterModules();
     }
 
     @Override
@@ -59,8 +62,40 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
         );
 
         if (existingRecord.isPresent()) {
-            log.info("Petición idempotente detectada para comprobante {}. Retornando resultado cacheado.", command.comprobanteId());
-            return deserializeResult(command.comprobanteId(), existingRecord.get().getResponsePayload(), true);
+            ComprobanteResult cachedResult = deserializeResult(command.comprobanteId(), existingRecord.get().getResponsePayload(), true);
+            
+            // Si el comprobante estaba en estado PENDIENTE_SUNAT, verificar si ya fue procesado en SUNAT
+            if ("PENDIENTE_SUNAT".equalsIgnoreCase(cachedResult.estadoSunat()) || "PENDIENTE".equalsIgnoreCase(cachedResult.estadoSunat())) {
+                try {
+                    ResultadoDeclaracion statusCheck = emisorTributarioPort.consultarEstadoComprobante(
+                            command.tipo(), command.serie(), command.numero()
+                    );
+                    if (statusCheck.exitoso() && "ACEPTADO".equalsIgnoreCase(statusCheck.estadoSunat())) {
+                        ComprobanteResult updatedResult = new ComprobanteResult(
+                                command.comprobanteId(),
+                                true,
+                                statusCheck.estadoSunat(),
+                                statusCheck.codigoRespuestaSunat(),
+                                statusCheck.mensajeSunat(),
+                                statusCheck.pdfUrl(),
+                                statusCheck.xmlUrl(),
+                                statusCheck.cdrUrl(),
+                                statusCheck.hashCdr(),
+                                false
+                        );
+                        idempotencyRepositoryPort.save(IdempotencyRecord.of(
+                                command.tenantId(),
+                                IdempotencyScope.VOUCHER,
+                                idempotencyKey,
+                                serializeResult(updatedResult)
+                        ));
+                        return updatedResult;
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            log.info("Petición idempotente detectada para comprobante {}. Retornando resultado.", command.comprobanteId());
+            return cachedResult;
         }
 
         // 2. Mapeo al modelo de dominio agnóstico
@@ -103,7 +138,7 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
             ));
         } catch (Exception e) {
             log.warn("Fallo al comunicar con PSE/SUNAT ({}: {}). Derivando a cola de reintento.", command.comprobanteId(), e.getMessage());
-            
+
             attemptRepositoryPort.save(IntegrationAttempt.retry(
                     command.tenantId(),
                     ProviderType.APISUNAT,
@@ -113,7 +148,7 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
                     e.getMessage()
             ));
 
-            // Guardar en cola de reintentos (Exponential backoff)
+            // Guardar en cola de reintentos (Exponential backoff con payload completo serializado)
             retryQueueRepositoryPort.save(RetryTask.create(
                     command.tenantId(),
                     ProviderType.APISUNAT,
@@ -228,46 +263,51 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
     }
 
     private String serializeResult(ComprobanteResult result) {
-        return String.format("{\"exitoso\":%b,\"estadoSunat\":\"%s\",\"codigo\":\"%s\",\"mensaje\":\"%s\",\"pdfUrl\":\"%s\",\"xmlUrl\":\"%s\",\"cdrUrl\":\"%s\",\"hashCdr\":\"%s\"}",
-                result.exitoso(),
-                result.estadoSunat() != null ? result.estadoSunat() : "",
-                result.codigoRespuestaSunat() != null ? result.codigoRespuestaSunat() : "",
-                result.mensajeSunat() != null ? result.mensajeSunat().replace("\"", "\\\"") : "",
-                result.pdfUrl() != null ? result.pdfUrl() : "",
-                result.xmlUrl() != null ? result.xmlUrl() : "",
-                result.cdrUrl() != null ? result.cdrUrl() : "",
-                result.hashCdr() != null ? result.hashCdr() : ""
-        );
+        try {
+            return objectMapper.writeValueAsString(result);
+        } catch (Exception e) {
+            throw new RuntimeException("Error al serializar resultado de comprobante", e);
+        }
     }
 
-    private ComprobanteResult deserializeResult(java.util.UUID comprobanteId, String payload, boolean fromCache) {
-        if (payload == null) {
+    private ComprobanteResult deserializeResult(UUID comprobanteId, String payload, boolean fromCache) {
+        if (payload == null || payload.isBlank()) {
             return new ComprobanteResult(comprobanteId, true, "PENDIENTE_SUNAT", "0", "En proceso", null, null, null, null, fromCache);
         }
-        boolean exitoso = payload.contains("\"exitoso\":true");
-        String estado = extractJsonField(payload, "estadoSunat");
-        String codigo = extractJsonField(payload, "codigo");
-        String mensaje = extractJsonField(payload, "mensaje");
-        String pdfUrl = extractJsonField(payload, "pdfUrl");
-        String xmlUrl = extractJsonField(payload, "xmlUrl");
-        String cdrUrl = extractJsonField(payload, "cdrUrl");
-        String hashCdr = extractJsonField(payload, "hashCdr");
+        try {
+            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(payload);
+            boolean exitoso = root.path("exitoso").asBoolean(true);
+            String estado = root.path("estadoSunat").asText(root.path("estado").asText("ACEPTADA"));
+            String codigo = root.path("codigoRespuestaSunat").asText(root.path("codigo").asText("0"));
+            String mensaje = root.path("mensajeSunat").asText(root.path("mensaje").asText("Comprobante procesado"));
+            String pdfUrl = root.path("pdfUrl").asText(null);
+            String xmlUrl = root.path("xmlUrl").asText(null);
+            String cdrUrl = root.path("cdrUrl").asText(null);
+            String hashCdr = root.path("hashCdr").asText(null);
 
-        return new ComprobanteResult(comprobanteId, exitoso, estado, codigo, mensaje, pdfUrl, xmlUrl, cdrUrl, hashCdr, fromCache);
+            return new ComprobanteResult(
+                    comprobanteId,
+                    exitoso,
+                    estado,
+                    codigo,
+                    mensaje,
+                    pdfUrl,
+                    xmlUrl,
+                    cdrUrl,
+                    hashCdr,
+                    fromCache
+            );
+        } catch (Exception e) {
+            log.warn("Error al deserializar resultado cacheado: {}", e.getMessage());
+            return new ComprobanteResult(comprobanteId, true, "PENDIENTE_SUNAT", "0", "En proceso", null, null, null, null, fromCache);
+        }
     }
 
     private String serializeCommand(EmitirComprobanteCommand cmd) {
-        return String.format("{\"tenantId\":\"%s\",\"comprobanteId\":\"%s\",\"tipo\":\"%s\",\"serie\":\"%s\",\"numero\":%d}",
-                cmd.tenantId(), cmd.comprobanteId(), cmd.tipo(), cmd.serie(), cmd.numero());
-    }
-
-    private String extractJsonField(String json, String key) {
-        String pattern = "\"" + key + "\":\"";
-        int start = json.indexOf(pattern);
-        if (start == -1) return null;
-        start += pattern.length();
-        int end = json.indexOf("\"", start);
-        if (end == -1) return null;
-        return json.substring(start, end);
+        try {
+            return objectMapper.writeValueAsString(cmd);
+        } catch (Exception e) {
+            throw new RuntimeException("Error al serializar comando para reintento", e);
+        }
     }
 }

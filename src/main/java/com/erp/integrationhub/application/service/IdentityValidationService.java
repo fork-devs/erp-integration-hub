@@ -40,6 +40,8 @@ public class IdentityValidationService implements ConsultarRucUseCase, Consultar
         this.attemptRepositoryPort = attemptRepositoryPort;
     }
 
+    public static final UUID SYSTEM_TENANT_ID = UUID.fromString("00000000-0000-0000-0000-000000000000");
+
     @Override
     public RucResult consultarRuc(ConsultarRucCommand command) {
         if (command.ruc() == null || command.ruc().trim().length() != 11) {
@@ -59,10 +61,11 @@ public class IdentityValidationService implements ConsultarRucUseCase, Consultar
             if (result.esValido() && identityCachePort != null) {
                 identityCachePort.putRuc(ruc, result);
             }
-            logAttempt(command.tenantId(), ProviderType.CHEQUEA, "VALIDATE_RUC", null);
+            logAttempt(command.tenantId(), ProviderType.CHEQUEA, "VALIDATE_RUC", ruc, null);
         } catch (Exception e) {
             log.warn("Fallo al validar RUC {} con proveedor externo: {}", ruc, e.getMessage());
             result = ConsultaRucResult.invalido(ruc);
+            logAttempt(command.tenantId(), ProviderType.CHEQUEA, "VALIDATE_RUC", ruc, e.getMessage());
         }
 
         return toRucResult(result, false);
@@ -87,20 +90,25 @@ public class IdentityValidationService implements ConsultarRucUseCase, Consultar
             if (result.esValido() && identityCachePort != null) {
                 identityCachePort.putPlaca(placa, result);
             }
-            logAttempt(command.tenantId(), ProviderType.SUNARP, "VALIDATE_PLATE", null);
+            logAttempt(command.tenantId(), ProviderType.SUNARP, "VALIDATE_PLATE", placa, null);
         } catch (Exception e) {
             log.warn("Fallo al consultar placa {} con proveedor externo: {}", placa, e.getMessage());
             result = ConsultaPlacaResult.invalido(placa);
+            logAttempt(command.tenantId(), ProviderType.SUNARP, "VALIDATE_PLATE", placa, e.getMessage());
         }
 
         return toPlacaResult(result, false);
     }
 
-    private void logAttempt(UUID tenantId, ProviderType provider, String op, String error) {
-        UUID effectiveTenant = tenantId != null ? tenantId : UUID.randomUUID();
+    private void logAttempt(UUID tenantId, ProviderType provider, String op, String referenceKey, String error) {
+        UUID effectiveTenant = tenantId != null ? tenantId : SYSTEM_TENANT_ID;
+        UUID referenceId = (referenceKey != null && !referenceKey.isBlank())
+                ? UUID.nameUUIDFromBytes(referenceKey.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                : UUID.randomUUID();
+
         attemptRepositoryPort.save(error == null
-                ? IntegrationAttempt.ok(effectiveTenant, provider, op, UUID.randomUUID(), 1)
-                : IntegrationAttempt.retry(effectiveTenant, provider, op, UUID.randomUUID(), 1, error)
+                ? IntegrationAttempt.ok(effectiveTenant, provider, op, referenceId, 1)
+                : IntegrationAttempt.retry(effectiveTenant, provider, op, referenceId, 1, error)
         );
     }
 

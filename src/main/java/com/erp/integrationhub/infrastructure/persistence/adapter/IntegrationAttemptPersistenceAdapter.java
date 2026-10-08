@@ -37,6 +37,13 @@ public class IntegrationAttemptPersistenceAdapter implements IntegrationAttemptR
     }
 
     @Override
+    public List<IntegrationAttempt> findByTenantId(UUID tenantId, int limit) {
+        return repository.findByTenantIdOrderByCreatedAtDesc(tenantId, PageRequest.of(0, limit)).stream()
+                .map(this::toDomain)
+                .collect(Collectors.toList());
+    }
+
+    @Override
     public List<IntegrationAttempt> findByStatus(AttemptStatus status, int limit) {
         return repository.findByStatusOrderByCreatedAtDesc(status.name(), PageRequest.of(0, limit)).stream()
                 .map(this::toDomain)

@@ -49,8 +49,12 @@ public class IntegrationAdminController {
             @RequestParam(value = "limit", defaultValue = "50") int limit) {
 
         List<IntegrationAttempt> attempts;
-        if (tenantId != null && referenceId != null) {
-            attempts = attemptRepositoryPort.findByTenantIdAndReferenceId(tenantId, referenceId);
+        if (tenantId != null) {
+            if (referenceId != null) {
+                attempts = attemptRepositoryPort.findByTenantIdAndReferenceId(tenantId, referenceId);
+            } else {
+                attempts = attemptRepositoryPort.findByTenantId(tenantId, limit);
+            }
         } else if (status != null) {
             attempts = attemptRepositoryPort.findByStatus(status, limit);
         } else {

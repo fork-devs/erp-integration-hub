@@ -117,16 +117,18 @@ public class ApplicationServiceConfig {
 
     @Bean
     public WebhookProcessingService webhookProcessingService(
-            IntegrationAttemptRepositoryPort attemptRepositoryPort) {
-        return new WebhookProcessingService(stripeWebhookSecret, apisunatToken, attemptRepositoryPort);
+            IntegrationAttemptRepositoryPort attemptRepositoryPort,
+            IdempotencyRepositoryPort idempotencyRepositoryPort) {
+        return new WebhookProcessingService(stripeWebhookSecret, apisunatToken, attemptRepositoryPort, idempotencyRepositoryPort);
     }
 
     @Bean
     public RetrySchedulerService retrySchedulerService(
             RetryQueueRepositoryPort retryQueueRepositoryPort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
+            IdempotencyRepositoryPort idempotencyRepositoryPort,
             EmisorTributarioPort emisorTributarioPort,
             PasarelaDePagoPort pasarelaDePagoPort) {
-        return new RetrySchedulerService(retryQueueRepositoryPort, attemptRepositoryPort, emisorTributarioPort, pasarelaDePagoPort);
+        return new RetrySchedulerService(retryQueueRepositoryPort, attemptRepositoryPort, idempotencyRepositoryPort, emisorTributarioPort, pasarelaDePagoPort);
     }
 }

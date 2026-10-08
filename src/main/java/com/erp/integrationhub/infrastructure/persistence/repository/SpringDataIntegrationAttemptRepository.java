@@ -10,6 +10,7 @@ import java.util.UUID;
 
 @Repository
 public interface SpringDataIntegrationAttemptRepository extends JpaRepository<IntegrationAttemptJpaEntity, UUID> {
+    List<IntegrationAttemptJpaEntity> findByTenantIdOrderByCreatedAtDesc(UUID tenantId, Pageable pageable);
     List<IntegrationAttemptJpaEntity> findByTenantIdAndReferenceId(UUID tenantId, UUID referenceId);
     List<IntegrationAttemptJpaEntity> findByStatusOrderByCreatedAtDesc(String status, Pageable pageable);
 }

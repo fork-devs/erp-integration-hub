@@ -95,7 +95,7 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
             resultado = emisorTributarioPort.emitirComprobante(comprobante);
             attemptRepositoryPort.save(IntegrationAttempt.ok(
                     command.tenantId(),
-                    ProviderType.NUBEFACT,
+                    ProviderType.APISUNAT,
                     "EMIT_VOUCHER",
                     command.comprobanteId(),
                     1
@@ -105,7 +105,7 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
             
             attemptRepositoryPort.save(IntegrationAttempt.retry(
                     command.tenantId(),
-                    ProviderType.NUBEFACT,
+                    ProviderType.APISUNAT,
                     "EMIT_VOUCHER",
                     command.comprobanteId(),
                     1,
@@ -115,7 +115,7 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
             // Guardar en cola de reintentos (Exponential backoff)
             retryQueueRepositoryPort.save(RetryTask.create(
                     command.tenantId(),
-                    ProviderType.NUBEFACT,
+                    ProviderType.APISUNAT,
                     "EMIT_VOUCHER",
                     command.comprobanteId(),
                     serializeCommand(command),

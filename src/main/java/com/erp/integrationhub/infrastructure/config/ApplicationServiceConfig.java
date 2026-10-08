@@ -12,11 +12,10 @@ import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
 import com.erp.integrationhub.domain.port.ValidadorIdentidadPort;
 import com.erp.integrationhub.domain.port.ValidadorVehicularPort;
+import com.erp.integrationhub.infrastructure.adapter.external.ApiSunatElectronicInvoicingAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.ChequeaPeRucValidationAdapter;
-import com.erp.integrationhub.infrastructure.adapter.external.NubefactElectronicInvoicingAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.StripePaymentGatewayAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.SunarpVehicleValidationAdapter;
-import com.erp.integrationhub.infrastructure.adapter.external.SunatReniecValidationAdapter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -26,17 +25,14 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableScheduling
 public class ApplicationServiceConfig {
 
-    @Value("${erp.integration.nubefact.base-url:https://api.nubefact.com/api/v1}")
-    private String nubefactBaseUrl;
+    @Value("${erp.integration.apisunat.base-url:https://sandbox.apisunat.pe}")
+    private String apisunatBaseUrl;
 
-    @Value("${erp.integration.nubefact.token:sandbox_token_nubefact}")
-    private String nubefactToken;
+    @Value("${erp.integration.apisunat.token:sandbox_token_apisunat}")
+    private String apisunatToken;
 
-    @Value("${erp.integration.nubefact.webhook-secret:sandbox_nubefact_secret}")
-    private String nubefactWebhookSecret;
-
-    @Value("${erp.integration.nubefact.sandbox-mode:true}")
-    private boolean nubefactSandboxMode;
+    @Value("${erp.integration.apisunat.sandbox-mode:true}")
+    private boolean apisunatSandboxMode;
 
     @Value("${erp.integration.stripe.api-key:sk_test_mock_stripe_key}")
     private String stripeApiKey;
@@ -67,7 +63,7 @@ public class ApplicationServiceConfig {
 
     @Bean
     public EmisorTributarioPort emisorTributarioPort() {
-        return new NubefactElectronicInvoicingAdapter(nubefactBaseUrl, nubefactToken, nubefactSandboxMode);
+        return new ApiSunatElectronicInvoicingAdapter(apisunatBaseUrl, apisunatToken, apisunatSandboxMode);
     }
 
     @Bean
@@ -113,7 +109,7 @@ public class ApplicationServiceConfig {
     @Bean
     public WebhookProcessingService webhookProcessingService(
             IntegrationAttemptRepositoryPort attemptRepositoryPort) {
-        return new WebhookProcessingService(stripeWebhookSecret, nubefactWebhookSecret, attemptRepositoryPort);
+        return new WebhookProcessingService(stripeWebhookSecret, apisunatToken, attemptRepositoryPort);
     }
 
     @Bean

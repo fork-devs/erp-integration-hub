@@ -59,7 +59,7 @@ class IntegrationAdminControllerTest {
         UUID tenantId = UUID.randomUUID();
         UUID refId = UUID.randomUUID();
 
-        IntegrationAttempt attempt = IntegrationAttempt.ok(tenantId, ProviderType.NUBEFACT, "EMIT_VOUCHER", refId, 1);
+        IntegrationAttempt attempt = IntegrationAttempt.ok(tenantId, ProviderType.APISUNAT, "EMIT_VOUCHER", refId, 1);
         when(attemptRepositoryPort.findByTenantIdAndReferenceId(eq(tenantId), eq(refId)))
                 .thenReturn(List.of(attempt));
 
@@ -68,7 +68,7 @@ class IntegrationAdminControllerTest {
                         .param("referenceId", refId.toString())
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].provider").value("NUBEFACT"))
+                .andExpect(jsonPath("$[0].provider").value("APISUNAT"))
                 .andExpect(jsonPath("$[0].status").value("OK"));
     }
 
@@ -76,7 +76,7 @@ class IntegrationAdminControllerTest {
     @DisplayName("GET /api/v1/integrations/admin/dlq - Should return DLQ tasks")
     void getDlqTasks_ShouldReturnList() throws Exception {
         UUID tenantId = UUID.randomUUID();
-        RetryTask dlqTask = RetryTask.create(tenantId, ProviderType.NUBEFACT, "EMIT_VOUCHER", UUID.randomUUID(), "{}", 5);
+        RetryTask dlqTask = RetryTask.create(tenantId, ProviderType.APISUNAT, "EMIT_VOUCHER", UUID.randomUUID(), "{}", 5);
 
         when(retryQueueRepositoryPort.findDlqTasks(eq(tenantId), eq(50)))
                 .thenReturn(List.of(dlqTask));
@@ -85,7 +85,7 @@ class IntegrationAdminControllerTest {
                         .header("X-Tenant-ID", tenantId.toString())
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].provider").value("NUBEFACT"));
+                .andExpect(jsonPath("$[0].provider").value("APISUNAT"));
     }
 
     @Test

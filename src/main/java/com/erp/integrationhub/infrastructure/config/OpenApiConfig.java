@@ -15,7 +15,7 @@ public class OpenApiConfig {
         return new OpenAPI()
             .info(new Info()
                 .title("ERP Integration Hub API")
-                .description("Anti-Corruption Layer (ACL) for SUNAT (Nubefact), Stripe Payments, and RENIEC/SUNARP Validations")
+                .description("Anti-Corruption Layer (ACL) for SUNAT (APISUNAT), Stripe Payments, and Chequea.pe/SUNARP Validations")
                 .version("v1.0.0")
                 .contact(new Contact()
                     .name("Engineering Team")

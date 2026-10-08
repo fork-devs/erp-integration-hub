@@ -54,7 +54,7 @@ class RetrySchedulerServiceTest {
     @Test
     @DisplayName("Should process pending retry tasks and mark completed")
     void processPendingRetries_WhenTasksExist_ShouldMarkCompleted() {
-        RetryTask task1 = RetryTask.create(UUID.randomUUID(), ProviderType.NUBEFACT, "EMIT_VOUCHER", UUID.randomUUID(), "{}", 5);
+        RetryTask task1 = RetryTask.create(UUID.randomUUID(), ProviderType.APISUNAT, "EMIT_VOUCHER", UUID.randomUUID(), "{}", 5);
         RetryTask task2 = RetryTask.create(UUID.randomUUID(), ProviderType.STRIPE, "CHARGE", UUID.randomUUID(), "{}", 5);
 
         when(retryQueueRepositoryPort.findPendingTasks(any(Instant.class), eq(10)))

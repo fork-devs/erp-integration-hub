@@ -21,7 +21,7 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/integrations/invoices")
-@Tag(name = "Electronic Invoicing (SUNAT/Nubefact)", description = "Endpoints for issuing electronic invoices, tickets, credit notes with SUNAT compliance")
+@Tag(name = "Electronic Invoicing (SUNAT/APISUNAT)", description = "Endpoints for issuing electronic invoices, tickets, credit notes with SUNAT compliance")
 public class ElectronicInvoicingController {
 
     private final EmitirComprobanteUseCase emitirComprobanteUseCase;
@@ -31,7 +31,7 @@ public class ElectronicInvoicingController {
     }
 
     @PostMapping("/emit")
-    @Operation(summary = "Emit electronic invoice/boleta to SUNAT via Nubefact", description = "Submits invoice to SUNAT with idempotency guarantee and automatic outbox retry on failure")
+    @Operation(summary = "Emit electronic invoice/boleta to SUNAT via APISUNAT", description = "Submits invoice to SUNAT with idempotency guarantee and automatic outbox retry on failure")
     public ResponseEntity<ComprobanteResponse> emitInvoice(
             @RequestHeader("X-Tenant-ID") UUID tenantId,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyHeader,

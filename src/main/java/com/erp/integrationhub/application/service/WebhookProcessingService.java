@@ -20,15 +20,15 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
     private static final Logger log = LoggerFactory.getLogger(WebhookProcessingService.class);
 
     private final String stripeWebhookSecret;
-    private final String nubefactWebhookSecret;
+    private final String apisunatWebhookSecret;
     private final IntegrationAttemptRepositoryPort attemptRepositoryPort;
 
     public WebhookProcessingService(
             String stripeWebhookSecret,
-            String nubefactWebhookSecret,
+            String apisunatWebhookSecret,
             IntegrationAttemptRepositoryPort attemptRepositoryPort) {
         this.stripeWebhookSecret = stripeWebhookSecret;
-        this.nubefactWebhookSecret = nubefactWebhookSecret;
+        this.apisunatWebhookSecret = apisunatWebhookSecret;
         this.attemptRepositoryPort = attemptRepositoryPort;
     }
 
@@ -39,7 +39,7 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
         }
 
         // 1. Verificación de firma HMAC SHA-256
-        String expectedSecret = provider == ProviderType.STRIPE ? stripeWebhookSecret : nubefactWebhookSecret;
+        String expectedSecret = provider == ProviderType.STRIPE ? stripeWebhookSecret : apisunatWebhookSecret;
         if (expectedSecret != null && !expectedSecret.contains("mock") && !expectedSecret.contains("sandbox")) {
             boolean validSignature = verifyHmacSignature(payload, signatureHeader, expectedSecret);
             if (!validSignature) {

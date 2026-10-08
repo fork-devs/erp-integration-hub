@@ -35,11 +35,10 @@ spring:
 
 erp:
   integration:
-    nubefact:
-      base-url: ${NUBEFACT_BASE_URL:https://api.nubefact.com/api/v1}
-      token: ${NUBEFACT_TOKEN:sandbox_token_nubefact}
-      webhook-secret: ${NUBEFACT_WEBHOOK_SECRET:sandbox_nubefact_secret}
-      sandbox-mode: ${NUBEFACT_SANDBOX_MODE:true}
+    apisunat:
+      base-url: ${APISUNAT_BASE_URL:https://sandbox.apisunat.pe}
+      token: ${APISUNAT_TOKEN:sandbox_token_apisunat}
+      sandbox-mode: ${APISUNAT_SANDBOX_MODE:true}
     stripe:
       api-key: ${STRIPE_API_KEY:sk_test_mock_stripe_key}
       webhook-secret: ${STRIPE_WEBHOOK_SECRET:whsec_test_mock_secret}

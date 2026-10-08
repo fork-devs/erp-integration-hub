@@ -42,7 +42,7 @@ spring:
 
 erp:
   security:
-    internal-service-key: ${INTERNAL_SERVICE_KEY:erp_internal_secret_service_key_2026}
+    internal-service-key: ${INTERNAL_SERVICE_KEY:}
     jwks-url: ${JWKS_URL:http://localhost:8081/.well-known/jwks.json}
   integration:
     apisunat:

@@ -29,6 +29,7 @@ import java.util.stream.Collectors;
 public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(InternalServiceAuthenticationFilter.class);
+    private static final long CLOCK_SKEW_TOLERANCE_MS = 60000; // 60s tolerancia de reloj
 
     private final String internalServiceKey;
     private final JwksKeyManager jwksKeyManager;
@@ -62,7 +63,7 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
 
         AuthenticatedUser authenticatedUser = null;
 
-        // 1. Validar llamada interna de microservicio hermano con comparación en tiempo constante (timing-safe)
+        // 1. Validar llamada interna de microservicio hermano con comparación timing-safe y principio de mínimo privilegio
         if (internalKeyHeader != null && internalServiceKey != null) {
             byte[] expectedBytes = internalServiceKey.getBytes(StandardCharsets.UTF_8);
             byte[] actualBytes = internalKeyHeader.trim().getBytes(StandardCharsets.UTF_8);
@@ -71,7 +72,7 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
                         UUID.randomUUID(),
                         null,
                         "internal-service",
-                        Set.of("ROLE_INTERNAL_SERVICE", "ROLE_ADMIN", "ROLE_SUPER_ADMIN"),
+                        Set.of("ROLE_INTERNAL_SERVICE", "ROLE_ADMIN"),
                         true
                 );
             }
@@ -110,11 +111,34 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
                 }
 
                 JWTClaimsSet claims = signedJWT.getJWTClaimsSet();
+                long now = System.currentTimeMillis();
 
+                // 2.1 Validación estricta y obligatoria de tiempo de expiración (exp)
                 Date expirationTime = claims.getExpirationTime();
-                if (expirationTime != null && expirationTime.before(new Date())) {
+                if (expirationTime == null) {
+                    log.warn("Token JWT rechazado: no contiene el claim obligatorio 'exp'");
+                    sendErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "Token JWT debe contener el claim obligatorio de expiración 'exp'");
+                    return;
+                }
+                if (expirationTime.before(new Date(now))) {
                     log.warn("JWT Token expirado para request {}", request.getRequestURI());
                     sendErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "Token JWT ha expirado");
+                    return;
+                }
+
+                // 2.2 Validación de Not-Before (nbf) si está presente
+                Date notBeforeTime = claims.getNotBeforeTime();
+                if (notBeforeTime != null && notBeforeTime.after(new Date(now + CLOCK_SKEW_TOLERANCE_MS))) {
+                    log.warn("JWT Token aún no es válido según claim 'nbf'");
+                    sendErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "Token JWT aún no es válido (nbf futuro)");
+                    return;
+                }
+
+                // 2.3 Validación de Issued-At (iat) si está presente
+                Date issueTime = claims.getIssueTime();
+                if (issueTime != null && issueTime.after(new Date(now + CLOCK_SKEW_TOLERANCE_MS))) {
+                    log.warn("JWT Token emitido con fecha futura inválida según claim 'iat'");
+                    sendErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "Token JWT emitido con fecha futura inválida (iat)");
                     return;
                 }
 

@@ -48,18 +48,21 @@ class InternalServiceAuthenticationFilterTest {
     }
 
     private String createValidSignedJwt(UUID tenantId, List<String> roles, Date expiration) throws Exception {
-        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+        JWTClaimsSet.Builder builder = new JWTClaimsSet.Builder()
                 .subject(UUID.randomUUID().toString())
-                .claim("tenant_id", tenantId.toString())
+                .claim("tenant_id", tenantId != null ? tenantId.toString() : null)
                 .claim("roles", roles)
-                .expirationTime(expiration)
-                .build();
+                .issueTime(new Date());
+
+        if (expiration != null) {
+            builder.expirationTime(expiration);
+        }
 
         JWSHeader header = new JWSHeader.Builder(JWSAlgorithm.RS256)
                 .keyID(keyId)
                 .build();
 
-        SignedJWT signedJWT = new SignedJWT(header, claims);
+        SignedJWT signedJWT = new SignedJWT(header, builder.build());
         signedJWT.sign(new RSASSASigner((RSAPrivateKey) keyPair.getPrivate()));
         return signedJWT.serialize();
     }
@@ -142,7 +145,6 @@ class InternalServiceAuthenticationFilterTest {
     @Test
     @DisplayName("Should reject token signed with untrusted / forged RSA private key")
     void doFilter_WithForgedSignature_ShouldReturn401Unauthorized() throws Exception {
-        // Generar clave de atacante
         KeyPairGenerator attackerKpg = KeyPairGenerator.getInstance("RSA");
         attackerKpg.initialize(2048);
         KeyPair attackerKeyPair = attackerKpg.generateKeyPair();
@@ -156,7 +158,7 @@ class InternalServiceAuthenticationFilterTest {
                 .build();
 
         JWSHeader header = new JWSHeader.Builder(JWSAlgorithm.RS256)
-                .keyID(keyId) // Usa el keyId legítimo pero firmado con clave falsa
+                .keyID(keyId)
                 .build();
 
         SignedJWT forgedJWT = new SignedJWT(header, claims);
@@ -187,7 +189,7 @@ class InternalServiceAuthenticationFilterTest {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRequestURI("/api/v1/integrations/invoices/emit");
         request.addHeader("Authorization", "Bearer " + token);
-        request.addHeader("X-Tenant-ID", forgedTenantId.toString()); // Intento de spoofing
+        request.addHeader("X-Tenant-ID", forgedTenantId.toString());
 
         MockHttpServletResponse response = new MockHttpServletResponse();
         FilterChain filterChain = mock(FilterChain.class);
@@ -201,9 +203,58 @@ class InternalServiceAuthenticationFilterTest {
     @DisplayName("Should reject expired JWT token with 401 Unauthorized")
     void doFilter_WithExpiredToken_ShouldReturn401Unauthorized() throws Exception {
         UUID tenantId = UUID.randomUUID();
-        Date expiredDate = new Date(System.currentTimeMillis() - 60000); // 1 minuto en el pasado
+        Date expiredDate = new Date(System.currentTimeMillis() - 60000);
 
         String token = createValidSignedJwt(tenantId, List.of("ROLE_USER"), expiredDate);
+
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/api/v1/integrations/invoices/emit");
+        request.addHeader("Authorization", "Bearer " + token);
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain filterChain = mock(FilterChain.class);
+
+        filter.doFilter(request, response, filterChain);
+
+        assertEquals(401, response.getStatus());
+    }
+
+    @Test
+    @DisplayName("Should reject JWT token WITHOUT mandatory exp claim with 401 Unauthorized")
+    void doFilter_WithoutExpClaim_ShouldReturn401Unauthorized() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        String token = createValidSignedJwt(tenantId, List.of("ROLE_USER"), null); // No exp
+
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/api/v1/integrations/invoices/emit");
+        request.addHeader("Authorization", "Bearer " + token);
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain filterChain = mock(FilterChain.class);
+
+        filter.doFilter(request, response, filterChain);
+
+        assertEquals(401, response.getStatus());
+    }
+
+    @Test
+    @DisplayName("Should reject JWT token with future nbf claim with 401 Unauthorized")
+    void doFilter_WithFutureNbfClaim_ShouldReturn401Unauthorized() throws Exception {
+        UUID tenantId = UUID.randomUUID();
+        Date futureDate = new Date(System.currentTimeMillis() + 300000); // 5 min in future
+
+        JWTClaimsSet claims = new JWTClaimsSet.Builder()
+                .subject(UUID.randomUUID().toString())
+                .claim("tenant_id", tenantId.toString())
+                .claim("roles", List.of("ROLE_USER"))
+                .notBeforeTime(futureDate)
+                .expirationTime(new Date(System.currentTimeMillis() + 600000))
+                .build();
+
+        JWSHeader header = new JWSHeader.Builder(JWSAlgorithm.RS256).keyID(keyId).build();
+        SignedJWT signedJWT = new SignedJWT(header, claims);
+        signedJWT.sign(new RSASSASigner((RSAPrivateKey) keyPair.getPrivate()));
+        String token = signedJWT.serialize();
 
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRequestURI("/api/v1/integrations/invoices/emit");

@@ -71,6 +71,17 @@ class IntegrationAdminControllerTest {
         UUID tenantId = UUID.randomUUID();
         UUID refId = UUID.randomUUID();
 
+        AuthenticatedUser user = new AuthenticatedUser(
+                UUID.randomUUID(),
+                tenantId,
+                "admin@taller.pe",
+                Set.of("ROLE_ADMIN"),
+                false
+        );
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(user, null, List.of(new SimpleGrantedAuthority("ROLE_ADMIN")))
+        );
+
         IntegrationAttempt attempt = IntegrationAttempt.ok(tenantId, ProviderType.APISUNAT, "EMIT_VOUCHER", refId, 1);
         when(attemptRepositoryPort.findByTenantIdAndReferenceId(eq(tenantId), eq(refId)))
                 .thenReturn(List.of(attempt));
@@ -140,6 +151,17 @@ class IntegrationAdminControllerTest {
         UUID tenantId = UUID.randomUUID();
         RetryTask dlqTask = RetryTask.create(tenantId, ProviderType.APISUNAT, "EMIT_VOUCHER", UUID.randomUUID(), "{}", 5);
 
+        AuthenticatedUser user = new AuthenticatedUser(
+                UUID.randomUUID(),
+                tenantId,
+                "admin@taller.pe",
+                Set.of("ROLE_ADMIN"),
+                false
+        );
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(user, null, List.of(new SimpleGrantedAuthority("ROLE_ADMIN")))
+        );
+
         when(retryQueueRepositoryPort.findDlqTasks(eq(tenantId), eq(50)))
                 .thenReturn(List.of(dlqTask));
 
@@ -151,13 +173,43 @@ class IntegrationAdminControllerTest {
     }
 
     @Test
-    @DisplayName("POST /api/v1/integrations/admin/retry/trigger - Should trigger retry worker")
-    void triggerRetryWorker_ShouldReturn200() throws Exception {
+    @DisplayName("POST /api/v1/integrations/admin/retry/trigger - Should trigger retry worker when ADMIN")
+    void triggerRetryWorker_AsAdmin_ShouldReturn200() throws Exception {
+        AuthenticatedUser user = new AuthenticatedUser(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "admin@taller.pe",
+                Set.of("ROLE_ADMIN"),
+                false
+        );
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(user, null, List.of(new SimpleGrantedAuthority("ROLE_ADMIN")))
+        );
+
         when(processRetryQueueUseCase.processPendingRetries(50)).thenReturn(3);
 
         mockMvc.perform(post("/api/v1/integrations/admin/retry/trigger")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.processedTasks").value(3));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/integrations/admin/retry/trigger - Should reject when caller lacks ADMIN or INTERNAL_SERVICE role")
+    void triggerRetryWorker_AsRegularUser_ShouldReturn403() throws Exception {
+        AuthenticatedUser user = new AuthenticatedUser(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "mecanico@taller.pe",
+                Set.of("ROLE_USER"),
+                false
+        );
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(user, null, List.of(new SimpleGrantedAuthority("ROLE_USER")))
+        );
+
+        mockMvc.perform(post("/api/v1/integrations/admin/retry/trigger")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isForbidden());
     }
 }

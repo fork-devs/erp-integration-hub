@@ -8,6 +8,13 @@ public class SecretResolver {
     private static final Logger log = LoggerFactory.getLogger(SecretResolver.class);
 
     /**
+     * Resuelve referencias a secretos en Vault o Variables de Entorno según doc §5 sin fallback por defecto.
+     */
+    public static String resolveSecret(String secretRef) {
+        return resolveSecret(secretRef, null);
+    }
+
+    /**
      * Resuelve referencias a secretos en Vault o Variables de Entorno según doc §5.
      * Ejemplo: vault:secret/apisunat#token, env:STRIPE_API_KEY, o token directo.
      */

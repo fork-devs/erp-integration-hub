@@ -16,6 +16,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.interfaces.RSAPublicKey;
 import java.util.Date;
 import java.util.HashSet;
@@ -32,10 +34,13 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
     private final JwksKeyManager jwksKeyManager;
 
     public InternalServiceAuthenticationFilter(String internalServiceKey, JwksKeyManager jwksKeyManager) {
-        this.internalServiceKey = (internalServiceKey != null && !internalServiceKey.isBlank())
-                ? internalServiceKey.trim()
-                : "erp_internal_secret_service_key_2026";
+        String resolvedKey = SecretResolver.resolveSecret(internalServiceKey);
+        this.internalServiceKey = (resolvedKey != null && !resolvedKey.isBlank()) ? resolvedKey.trim() : null;
         this.jwksKeyManager = jwksKeyManager;
+
+        if (this.internalServiceKey == null) {
+            log.warn("ADVERTENCIA DE SEGURIDAD: INTERNAL_SERVICE_KEY no configurada. El bypass de servicios internos permanecerá deshabilitado.");
+        }
     }
 
     @Override
@@ -57,18 +62,23 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
 
         AuthenticatedUser authenticatedUser = null;
 
-        // 1. Validar llamada interna de microservicio hermano (X-Internal-Service-Key)
-        if (internalKeyHeader != null && internalKeyHeader.trim().equals(internalServiceKey)) {
-            authenticatedUser = new AuthenticatedUser(
-                    UUID.randomUUID(),
-                    null,
-                    "internal-service",
-                    Set.of("ROLE_INTERNAL_SERVICE", "ROLE_ADMIN", "ROLE_SUPER_ADMIN"),
-                    true
-            );
+        // 1. Validar llamada interna de microservicio hermano con comparación en tiempo constante (timing-safe)
+        if (internalKeyHeader != null && internalServiceKey != null) {
+            byte[] expectedBytes = internalServiceKey.getBytes(StandardCharsets.UTF_8);
+            byte[] actualBytes = internalKeyHeader.trim().getBytes(StandardCharsets.UTF_8);
+            if (MessageDigest.isEqual(expectedBytes, actualBytes)) {
+                authenticatedUser = new AuthenticatedUser(
+                        UUID.randomUUID(),
+                        null,
+                        "internal-service",
+                        Set.of("ROLE_INTERNAL_SERVICE", "ROLE_ADMIN", "ROLE_SUPER_ADMIN"),
+                        true
+                );
+            }
         }
+
         // 2. Validar Bearer JWT Token con verificación criptográfica RS256 contra JWKS
-        else if (authHeader != null && authHeader.startsWith("Bearer ")) {
+        if (authenticatedUser == null && authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7).trim();
             try {
                 // Parsear estrictamente como SignedJWT (rechaza plain tokens o alg=none)

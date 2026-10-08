@@ -13,6 +13,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,6 +30,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/integrations/admin")
 @Tag(name = "Integration Administration", description = "Endpoints for monitoring integration attempts, DLQ (Dead Letter Queue), and triggering retry processing")
+@PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
 public class IntegrationAdminController {
 
     private final IntegrationAttemptRepositoryPort attemptRepositoryPort;
@@ -46,6 +48,7 @@ public class IntegrationAdminController {
 
     @GetMapping("/attempts")
     @Operation(summary = "Query integration attempts", description = "Fetches integration attempt audit logs by reference ID or status with strict tenant isolation")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
     public ResponseEntity<List<IntegrationAttemptResponse>> getAttempts(
             @RequestHeader(value = "X-Tenant-ID", required = false) UUID tenantId,
             @RequestParam(value = "referenceId", required = false) UUID referenceId,
@@ -59,7 +62,11 @@ public class IntegrationAdminController {
             tenantId = authUser.tenantId();
         }
 
-        // Validación estricta de acceso al tenant
+        // Validación estricta de acceso al tenant: usuarios regulares/tenant admins no pueden consultar globalmente
+        if (tenantId == null && (authUser == null || (!authUser.isInternalService() && !authUser.isSuperAdmin()))) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
         if (tenantId != null && authUser != null && !authUser.canAccessTenant(tenantId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
@@ -86,6 +93,7 @@ public class IntegrationAdminController {
 
     @GetMapping("/dlq")
     @Operation(summary = "List Dead Letter Queue tasks", description = "Fetches failed integration tasks that exceeded maximum retry attempts")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
     public ResponseEntity<List<RetryTaskResponse>> getDlqTasks(
             @RequestHeader(value = "X-Tenant-ID", required = false) UUID tenantId,
             @RequestParam(value = "limit", defaultValue = "50") int limit) {
@@ -94,6 +102,10 @@ public class IntegrationAdminController {
 
         if (tenantId == null && authUser != null && authUser.tenantId() != null) {
             tenantId = authUser.tenantId();
+        }
+
+        if (tenantId == null && (authUser == null || (!authUser.isInternalService() && !authUser.isSuperAdmin()))) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
         if (tenantId != null && authUser != null && !authUser.canAccessTenant(tenantId)) {
@@ -113,8 +125,14 @@ public class IntegrationAdminController {
     }
 
     @PostMapping("/retry/trigger")
-    @Operation(summary = "Trigger retry worker manually", description = "Executes the retry queue processor on-demand to process pending failed tasks")
+    @Operation(summary = "Trigger retry worker manually", description = "Executes the retry queue processor on-demand (ADMIN / INTERNAL_SERVICE only)")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
     public ResponseEntity<Map<String, Object>> triggerRetryWorker() {
+        AuthenticatedUser authUser = getAuthenticatedUser();
+        if (authUser == null || (!authUser.isAdmin() && !authUser.isInternalService())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
         int processed = processRetryQueueUseCase.processPendingRetries(50);
         return ResponseEntity.ok(Map.of(
                 "message", "Retry processing cycle executed successfully",

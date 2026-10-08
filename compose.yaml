@@ -1,0 +1,15 @@
+services:
+  erp-integration-db:
+    image: postgres:16-alpine
+    container_name: erp-integration-db
+    environment:
+      POSTGRES_DB: erp_integration_db
+      POSTGRES_USER: integration_user
+      POSTGRES_PASSWORD: integration_secret
+    ports:
+      - "5434:5432"
+    volumes:
+      - erp_integration_pgdata:/var/lib/postgresql/data
+
+volumes:
+  erp_integration_pgdata:

@@ -1,0 +1,35 @@
+spring:
+  application:
+    name: erp-integration-hub-test
+  datasource:
+    url: jdbc:h2:mem:integration_test_db;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    database-platform: org.hibernate.dialect.H2Dialect
+    show-sql: false
+  flyway:
+    enabled: false
+
+erp:
+  integration:
+    nubefact:
+      base-url: https://api.nubefact.com/api/v1
+      token: test_token
+      webhook-secret: test_secret
+      sandbox-mode: true
+    stripe:
+      api-key: sk_test_mock
+      webhook-secret: whsec_test_mock
+      sandbox-mode: true
+    apiperu:
+      base-url: https://apiperu.dev/api
+      token: test_token
+      sandbox-mode: true
+    retry:
+      enabled: false
+      interval-ms: 100000
+      max-attempts: 5

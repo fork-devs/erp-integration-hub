@@ -4,6 +4,8 @@ import com.erp.integrationhub.application.dto.command.ProcesarPagoCommand;
 import com.erp.integrationhub.application.logging.SecurityEventLogger;
 import com.erp.integrationhub.application.dto.result.PagoResult;
 import com.erp.integrationhub.application.usecase.ProcesarPagoUseCase;
+import com.erp.integrationhub.domain.exception.IdempotencyConflictException;
+import com.erp.integrationhub.domain.model.IdempotencyKeyState;
 import com.erp.integrationhub.domain.model.IdempotencyRecord;
 import com.erp.integrationhub.domain.model.IdempotencyScope;
 import com.erp.integrationhub.domain.model.IntegrationAttempt;
@@ -11,6 +13,7 @@ import com.erp.integrationhub.domain.model.Moneda;
 import com.erp.integrationhub.domain.model.ProviderType;
 import com.erp.integrationhub.domain.model.ResultadoPago;
 import com.erp.integrationhub.domain.model.SolicitudCobro;
+import com.erp.integrationhub.domain.util.PayloadFingerprint;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
@@ -46,14 +49,44 @@ public class PaymentIntegrationService implements ProcesarPagoUseCase {
             throw new IllegalArgumentException("tenantId, paymentId e idempotencyKey son obligatorios");
         }
 
-        // 1. Verificación de Idempotencia
+        // 1. Huella de la carga util. Es lo que distingue la peticion que se
+        // repite de otra peticion con la misma clave.
+        String huella = PayloadFingerprint.of(cargaUtilDe(command));
+
+        // 2. Estado de la clave. Si ya hay un resultado DEFINITIVO, se
+        // devuelve; si la clave esta EN CURSO, otra peticion la reclamo y no
+        // hay que volver a llamar al proveedor; si esta LIBERADA, se puede
+        // reintentar.
         Optional<IdempotencyRecord> existing = idempotencyRepositoryPort.findByTenantAndScopeAndKey(
                 command.tenantId(), IdempotencyScope.PAYMENT, command.idempotencyKey()
         );
 
         if (existing.isPresent()) {
-            log.info("Cobro idempotente detectado para pago {}. Retornando resultado cacheado.", command.paymentId());
-            return deserializeResult(command.paymentId(), existing.get().getResponsePayload(), true);
+            IdempotencyRecord registro = existing.get();
+
+            if (!registro.mismaPeticion(huella)) {
+                // La misma clave con otra carga util NO es la misma peticion.
+                // Devolver el resultado anterior seria no cobrar la segunda.
+                throw new IdempotencyConflictException(
+                        "La clave de idempotencia ya se uso para una peticion distinta");
+            }
+
+            if (registro.getState().resultadoDefinitivo()) {
+                log.info("Cobro idempotente detectado para pago {}. Retornando resultado almacenado.",
+                        command.paymentId());
+                return deserializeResult(command.paymentId(), registro.getResponsePayload(), true);
+            }
+
+            if (registro.getState() == IdempotencyKeyState.IN_PROGRESS) {
+                // La clave esta reclamada: otra peticion esta contacting al
+                // proveedor con ella. Volver a llamar seria cobrar dos veces.
+                throw new IdempotencyConflictException(
+                        "La operacion con esta clave de idempotencia ya esta en curso");
+            }
+
+            // LIBERADA: el intento anterior fallo de forma transitoria. Se
+            // vuelve a intentar.
+            log.info("Reintentando el cobro {} con una clave de idempotencia liberada.", command.paymentId());
         }
 
         // 2. Mapeo a entidad de dominio
@@ -69,7 +102,22 @@ public class PaymentIntegrationService implements ProcesarPagoUseCase {
                 command.idempotencyKey()
         );
 
-        // 3. Procesar cobro en pasarela (Stripe). La llamada al proveedor NO
+        // 3. RECLAMAR la clave, ANTES de contactar al proveedor. La
+        // unicidad de (taller, alcance, clave) la impone la base de datos:
+        // dos peticiones simultaneas con la misma clave no pueden reclamar
+        // las dos, y la que pierde NO llama al proveedor. Sin esta
+        // reclamacion previa, dos peticiones simultaneas cobraban dos veces.
+        final IdempotencyRecord claimed;
+        try {
+            claimed = unitOfWork.callInTransaction(() -> idempotencyRepositoryPort.claim(
+                    command.tenantId(), IdempotencyScope.PAYMENT, command.idempotencyKey(), huella));
+        } catch (IdempotencyConflictException e) {
+            log.info("La clave de idempotencia {} ya esta reclamada: no se vuelve a cobrar.",
+                    command.idempotencyKey());
+            throw e;
+        }
+
+        // 4. Procesar cobro en pasarela (Stripe). La llamada al proveedor NO
         // ocurre dentro de la transaccion: es una llamada externa, lenta y
         // fuera del control del sistema, y mantener abierta una transaccion
         // mientras espera bloquearia recursos de la base de datos sin
@@ -94,12 +142,10 @@ public class PaymentIntegrationService implements ProcesarPagoUseCase {
                 false
         );
 
-        // 4. El registro del intento y el registro de idempotencia se
-        // confirman juntos. Antes eran dos escrituras en dos transacciones:
-        // si la escritura de idempotencia fallaba despues de haber
-        // registrado el intento, quedaba un cobro sin su clave de
-        // idempotencia, y la siguiente peticion con la misma clave se
-        // cobraria de nuevo.
+        // 5. El registro del intento y la ACTUALIZACION del registro de
+        // idempotencia se confirman juntos. La actualizacion va por la clave
+        // de negocio, de modo que no inserta una fila nueva: el resultado
+        // llega a la fila que ya fue reclamada.
         unitOfWork.runInTransaction(() -> {
             attemptRepositoryPort.save(resultado.exitoso()
                     ? IntegrationAttempt.ok(
@@ -116,18 +162,39 @@ public class PaymentIntegrationService implements ProcesarPagoUseCase {
                             1,
                             resultado.mensajeError()));
 
-            idempotencyRepositoryPort.save(IdempotencyRecord.of(
+            String payload = serializeResult(finalResult);
+            String hash = Integer.toHexString(payload.hashCode());
+
+            // Un fallo NO es un resultado definitivo: la clave se libera
+            // para que un reintento pueda volver a intentarlo. Con el
+            // resultado cacheado como definitivo, la peticion del usuario se
+            // perdia para siempre.
+            idempotencyRepositoryPort.updateByKey(
                     command.tenantId(),
                     IdempotencyScope.PAYMENT,
                     command.idempotencyKey(),
-                    serializeResult(finalResult)
-            ));
+                    resultado.exitoso() ? claimed.completed(payload, hash) : claimed.released());
         });
 
         SecurityEventLogger.registrar("cobro_procesado", command.tenantId(), null, null,
                 finalResult.exitoso() ? "ok" : "fallo", java.util.Map.of("pago", command.paymentId().toString()));
 
         return finalResult;
+    }
+
+    /**
+     * La carga util de la peticion de cobro. Es lo que se huella para
+     * distinguir la peticion que se repite de otra con la misma clave.
+     */
+    private String cargaUtilDe(ProcesarPagoCommand command) {
+        return String.join("|",
+                String.valueOf(command.tenantId()),
+                String.valueOf(command.paymentId()),
+                String.valueOf(command.monto()),
+                String.valueOf(command.moneda()),
+                String.valueOf(command.tokenTarjeta()),
+                String.valueOf(command.descripcion()),
+                String.valueOf(command.clienteEmail()));
     }
 
     private String serializeResult(PagoResult result) {

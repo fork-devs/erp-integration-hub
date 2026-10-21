@@ -98,6 +98,27 @@ public class RetrySchedulerService implements ProcessRetryQueueUseCase {
         return processed;
     }
 
+    /**
+     * Escribe el resultado en el registro de idempotencia, por su clave de
+     * negocio. Si la fila no existe, la reclama antes: es la primera vez que
+     * se registra ese resultado.
+     */
+    private void actualizarIdempotencia(EmitirComprobanteCommand cmd, String payload) {
+        String clave = cmd.idempotencyKey() != null ? cmd.idempotencyKey() : cmd.comprobanteId().toString();
+        IdempotencyRecord existente = idempotencyRepositoryPort
+                .findByTenantAndScopeAndKey(cmd.tenantId(), IdempotencyScope.VOUCHER, clave)
+                .orElse(null);
+        if (existente != null) {
+            idempotencyRepositoryPort.updateByKey(cmd.tenantId(), IdempotencyScope.VOUCHER, clave,
+                    existente.completed(payload, null));
+            return;
+        }
+        IdempotencyRecord claimado = idempotencyRepositoryPort
+                .claim(cmd.tenantId(), IdempotencyScope.VOUCHER, clave, null);
+        idempotencyRepositoryPort.updateByKey(cmd.tenantId(), IdempotencyScope.VOUCHER, clave,
+                claimado.completed(payload, null));
+    }
+
     private void executeVoucherRetry(RetryTask task) throws Exception {
         EmitirComprobanteCommand cmd = objectMapper.readValue(task.getPayload(), EmitirComprobanteCommand.class);
 
@@ -180,12 +201,22 @@ public class RetrySchedulerService implements ProcessRetryQueueUseCase {
                 task.markCompleted();
                 retryQueueRepositoryPort.save(task);
 
-                idempotencyRepositoryPort.save(IdempotencyRecord.of(
-                        cmd.tenantId(),
-                        IdempotencyScope.VOUCHER,
-                        cmd.idempotencyKey() != null ? cmd.idempotencyKey() : cmd.comprobanteId().toString(),
-                        idempotencyPayload
-                ));
+                // La actualizacion va por la clave de negocio: el resultado
+                // llega a la fila que ya existe, y no se inserta una nueva.
+                // Si la fila no existe, se reclama: es la primera vez que se
+                // registra ese resultado.
+                try {
+                    actualizarIdempotencia(cmd, idempotencyPayload);
+                } catch (RuntimeException e) {
+                    // El comprobante YA se emitio, y eso esta registrado en
+                    // la tarea y en el intento. La cache de idempotencia es
+                    // una comodidad: que su escritura falle no puede
+                    // convertir un reintento EXITOSO en un fallo, ni
+                    // reprogramar la emision de un comprobante que SUNAT ya
+                    // acepto.
+                    log.error("No se pudo actualizar el registro de idempotencia del comprobante {}: {}",
+                            cmd.comprobanteId(), e.getMessage(), e);
+                }
 
                 attemptRepositoryPort.save(IntegrationAttempt.ok(
                         task.getTenantId(),

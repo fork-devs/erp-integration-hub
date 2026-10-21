@@ -6,6 +6,7 @@ import com.erp.integrationhub.application.dto.result.ComprobanteResult;
 import com.erp.integrationhub.application.usecase.EmitirComprobanteUseCase;
 import com.erp.integrationhub.domain.model.ComprobanteParaDeclarar;
 import com.erp.integrationhub.domain.model.ComprobanteTipo;
+import com.erp.integrationhub.domain.exception.IdempotencyConflictException;
 import com.erp.integrationhub.domain.model.IdempotencyRecord;
 import com.erp.integrationhub.domain.model.IdempotencyScope;
 import com.erp.integrationhub.domain.model.IntegrationAttempt;
@@ -13,6 +14,7 @@ import com.erp.integrationhub.domain.model.ItemComprobante;
 import com.erp.integrationhub.domain.model.Moneda;
 import com.erp.integrationhub.domain.model.ProviderType;
 import com.erp.integrationhub.domain.model.ResultadoDeclaracion;
+import com.erp.integrationhub.domain.util.PayloadFingerprint;
 import com.erp.integrationhub.domain.model.RetryTask;
 import com.erp.integrationhub.domain.port.EmisorTributarioPort;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
@@ -59,14 +61,27 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
             throw new IllegalArgumentException("tenantId y comprobanteId son obligatorios");
         }
 
-        // 1. Verificación de Idempotencia
+        // 1. Huella de la carga util: distingue el reintento del mismo
+        // comprobante de otra emision con la misma clave.
         String idempotencyKey = command.idempotencyKey() != null ? command.idempotencyKey().trim() : command.comprobanteId().toString();
+        String huella = PayloadFingerprint.of(cargaUtilDe(command));
+
+        // 2. Estado de la clave de idempotencia.
         Optional<IdempotencyRecord> existingRecord = idempotencyRepositoryPort.findByTenantAndScopeAndKey(
                 command.tenantId(), IdempotencyScope.VOUCHER, idempotencyKey
         );
 
         if (existingRecord.isPresent()) {
-            ComprobanteResult cachedResult = deserializeResult(command.comprobanteId(), existingRecord.get().getResponsePayload(), true);
+            IdempotencyRecord registroExistente = existingRecord.get();
+
+            if (!registroExistente.mismaPeticion(huella)
+                    && registroExistente.getState().resultadoDefinitivo()) {
+                // La misma clave con otra carga util NO es la misma peticion.
+                throw new IdempotencyConflictException(
+                        "La clave de idempotencia ya se uso para una peticion distinta");
+            }
+
+            ComprobanteResult cachedResult = deserializeResult(command.comprobanteId(), registroExistente.getResponsePayload(), true);
             
             // Si el comprobante estaba en estado PENDIENTE_SUNAT, verificar si ya fue procesado en SUNAT
             if ("PENDIENTE_SUNAT".equalsIgnoreCase(cachedResult.estadoSunat()) || "PENDIENTE".equalsIgnoreCase(cachedResult.estadoSunat())) {
@@ -87,12 +102,14 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
                                 statusCheck.hashCdr(),
                                 false
                         );
-                        unitOfWork.runInTransaction(() -> idempotencyRepositoryPort.save(IdempotencyRecord.of(
+                        // La actualizacion va por la clave de negocio: el
+                        // resultado llega a la fila que ya existe, y no se
+                        // inserta una nueva.
+                        unitOfWork.runInTransaction(() -> idempotencyRepositoryPort.updateByKey(
                                 command.tenantId(),
                                 IdempotencyScope.VOUCHER,
                                 idempotencyKey,
-                                serializeResult(updatedResult)
-                        )));
+                                registroExistente.completed(serializeResult(updatedResult), null)));
                         return updatedResult;
                     }
                 } catch (Exception ignored) {}
@@ -280,6 +297,23 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
                 cmd.igv(),
                 cmd.total()
         );
+    }
+
+    /**
+     * La carga util de la peticion de emision. Es lo que se huella para
+     * distinguir el reintento del mismo comprobante de otra emision con la
+     * misma clave.
+     */
+    private String cargaUtilDe(EmitirComprobanteCommand command) {
+        return String.join("|",
+                String.valueOf(command.tenantId()),
+                String.valueOf(command.comprobanteId()),
+                String.valueOf(command.tipo()),
+                String.valueOf(command.serie()),
+                String.valueOf(command.numero()),
+                String.valueOf(command.clienteNumDoc()),
+                String.valueOf(command.total()),
+                String.valueOf(command.moneda()));
     }
 
     private String serializeResult(ComprobanteResult result) {

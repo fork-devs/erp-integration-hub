@@ -26,6 +26,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -75,6 +77,11 @@ class PaymentIntegrationServiceTest {
         when(idempotencyRepositoryPort.findByTenantAndScopeAndKey(tenantId, IdempotencyScope.PAYMENT, "idem-pay-01"))
                 .thenReturn(Optional.empty());
 
+        // La clave se RECLAMA antes de contactar al proveedor, y la
+        // reclamacion devuelve el registro que se actualizara despues.
+        when(idempotencyRepositoryPort.claim(eq(tenantId), eq(IdempotencyScope.PAYMENT), eq("idem-pay-01"), anyString()))
+                .thenReturn(IdempotencyRecord.claiming(tenantId, IdempotencyScope.PAYMENT, "idem-pay-01", "huella"));
+
         ResultadoPago resultadoStripe = ResultadoPago.exitoso("ch_3M4vX...mock", "AUTH-994821");
         when(pasarelaDePagoPort.procesarCobro(any())).thenReturn(resultadoStripe);
 
@@ -90,7 +97,10 @@ class PaymentIntegrationServiceTest {
         assertFalse(result.cachedResponse());
 
         verify(attemptRepositoryPort).save(any());
-        verify(idempotencyRepositoryPort).save(any());
+        // El resultado se ESCRIBE sobre la fila reclamada, no en una nueva.
+        verify(idempotencyRepositoryPort).claim(eq(tenantId), eq(IdempotencyScope.PAYMENT), eq("idem-pay-01"), anyString());
+        verify(idempotencyRepositoryPort).updateByKey(eq(tenantId), eq(IdempotencyScope.PAYMENT), eq("idem-pay-01"), any());
+        verify(idempotencyRepositoryPort, never()).save(any());
     }
 
     @Test
@@ -109,7 +119,19 @@ class PaymentIntegrationServiceTest {
         );
 
         String cachedJson = "{\"exitoso\":true,\"estado\":\"PAID\",\"chargeId\":\"ch_cached_123\",\"clientSecret\":null,\"codigoAutorizacion\":\"AUTH-0001\",\"mensajeError\":null}";
-        IdempotencyRecord record = new IdempotencyRecord(UUID.randomUUID(), tenantId, IdempotencyScope.PAYMENT, "idem-pay-cached", null, "hash", cachedJson,
+        // El registro almacenado lleva la huella de la MISMA peticion: con
+        // otra huella, la clave se rechaza por conflicto, porque no es la
+        // misma peticion.
+        String huella = com.erp.integrationhub.domain.util.PayloadFingerprint.of(String.join("|",
+                String.valueOf(tenantId),
+                String.valueOf(paymentId),
+                "150.00",
+                "PEN",
+                "tok_visa",
+                "Alineamiento y balanceo",
+                "cliente@taller.pe"));
+
+        IdempotencyRecord record = new IdempotencyRecord(UUID.randomUUID(), tenantId, IdempotencyScope.PAYMENT, "idem-pay-cached", huella, "hash", cachedJson,
                 IdempotencyKeyState.COMPLETED, java.time.Instant.now());
 
         when(idempotencyRepositoryPort.findByTenantAndScopeAndKey(tenantId, IdempotencyScope.PAYMENT, "idem-pay-cached"))

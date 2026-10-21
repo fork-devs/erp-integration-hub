@@ -48,6 +48,32 @@ public class IdempotencyPersistenceAdapter implements IdempotencyRepositoryPort 
     @Override
     public IdempotencyRecord claim(UUID tenantId, IdempotencyScope scope, String key, String requestHash) {
         transactionGuard.requireActiveTransaction("claimIdempotencyKey");
+
+        // Primero se busca la fila. Si esta LIBERADA, se puede volver a
+        // reclamar: un fallo transitorio no puede dejar la clave
+        // inutilizable para siempre. Si esta EN CURSO o COMPLETADA, otra
+        // peticion la reclamo y no hay que volver a llamar al proveedor.
+        //
+        // La busqueda va PRIMERO a proposito: un INSERT que viola la
+        // unicidad ABORTA la transaccion en PostgreSQL, y desde ahi la
+        // transaccion no sirve para nada. Actualizando la fila liberada, la
+        // transaccion sigue viva.
+        Optional<IdempotencyKeyJpaEntity> existente = repository
+                .findByTenantIdAndScopeAndKey(tenantId, scope.name(), key);
+
+        if (existente.isPresent()) {
+            IdempotencyKeyJpaEntity fila = existente.get();
+            if (fila.getState() == null || !IdempotencyKeyState.RELEASED.name().equals(fila.getState())) {
+                throw new IdempotencyConflictException(
+                        "La clave de idempotencia ya fue reclamada: " + key);
+            }
+            fila.setState(IdempotencyKeyState.IN_PROGRESS.name());
+            fila.setRequestHash(requestHash);
+            fila.setResponseHash(null);
+            fila.setResponsePayload(null);
+            return toDomain(repository.save(fila));
+        }
+
         try {
             IdempotencyKeyJpaEntity entity = new IdempotencyKeyJpaEntity(
                     null,
@@ -67,8 +93,8 @@ public class IdempotencyPersistenceAdapter implements IdempotencyRepositoryPort 
             repository.flush();
             return toDomain(saved);
         } catch (DataIntegrityViolationException e) {
-            // La clave ya existe: otra peticion la reclamo antes. La unicidad
-            // de la base de datos es lo que serializa las dos.
+            // Dos peticiones simultaneas llegaron a la vez: una gano la
+            // reclamacion, y la otra NO llama al proveedor.
             throw new IdempotencyConflictException(
                     "La clave de idempotencia ya fue reclamada: " + key);
         }
@@ -117,8 +143,12 @@ public class IdempotencyPersistenceAdapter implements IdempotencyRepositoryPort 
     }
 
     private IdempotencyKeyJpaEntity toEntity(IdempotencyRecord domain) {
+        // El identificador lo ASIGNA la base de datos, siempre: si la
+        // aplicacion lo asignara, un guardado de una entidad que ya existe
+        // se resolveria como una INSERCION, y la actualizacion del
+        // resultado de una operacion idempotente seria imposible.
         return new IdempotencyKeyJpaEntity(
-                domain.getId(),
+                null,
                 domain.getTenantId(),
                 domain.getScope().name(),
                 domain.getKey(),

@@ -100,8 +100,10 @@ class VoucherRetryAtomicityTest extends AbstractPostgresIntegrationTest {
         RetryTask despues = retryQueueRepositoryPort.findById(tarea.getId()).orElseThrow();
         assertNotEquals("PENDING", despues.getStatus(),
                 "La tarea no debe volver a la cola de pendientes: el comprobante ya fue emitido");
-        assertEquals("DLQ", despues.getStatus(),
-                "La tarea debe quedar en la cola de muertos, que es terminal: no se reintentara sola");
+        assertEquals("COMPLETED", despues.getStatus(),
+                "El comprobante ya fue emitido por el proveedor: la tarea no puede reprogramarse para "
+                        + "reenviarlo, porque eso.emitiria un comprobante duplicado. Un fallo de la cache "
+                        + "de idempotencia no cambia el resultado de la emision.");
         assertEquals(0, idempotencyRepositoryPort
                 .findByTenantAndScopeAndKey(TALLER,
                         com.erp.integrationhub.domain.model.IdempotencyScope.VOUCHER,

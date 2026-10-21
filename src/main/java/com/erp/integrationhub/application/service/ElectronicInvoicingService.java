@@ -18,6 +18,7 @@ import com.erp.integrationhub.domain.port.EmisorTributarioPort;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
+import com.erp.integrationhub.domain.port.UnitOfWork;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,17 +37,20 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
     private final IntegrationAttemptRepositoryPort attemptRepositoryPort;
     private final RetryQueueRepositoryPort retryQueueRepositoryPort;
     private final ObjectMapper objectMapper;
+    private final UnitOfWork unitOfWork;
 
     public ElectronicInvoicingService(
             EmisorTributarioPort emisorTributarioPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
-            RetryQueueRepositoryPort retryQueueRepositoryPort) {
+            RetryQueueRepositoryPort retryQueueRepositoryPort,
+            UnitOfWork unitOfWork) {
         this.emisorTributarioPort = emisorTributarioPort;
         this.idempotencyRepositoryPort = idempotencyRepositoryPort;
         this.attemptRepositoryPort = attemptRepositoryPort;
         this.retryQueueRepositoryPort = retryQueueRepositoryPort;
         this.objectMapper = new ObjectMapper().findAndRegisterModules();
+        this.unitOfWork = unitOfWork;
     }
 
     @Override
@@ -83,12 +87,12 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
                                 statusCheck.hashCdr(),
                                 false
                         );
-                        idempotencyRepositoryPort.save(IdempotencyRecord.of(
+                        unitOfWork.runInTransaction(() -> idempotencyRepositoryPort.save(IdempotencyRecord.of(
                                 command.tenantId(),
                                 IdempotencyScope.VOUCHER,
                                 idempotencyKey,
                                 serializeResult(updatedResult)
-                        ));
+                        )));
                         return updatedResult;
                     }
                 } catch (Exception ignored) {}
@@ -125,40 +129,56 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
                 command.fechaEmision()
         );
 
-        // 3. Emisión hacia PSE / SUNAT con tolerancia a fallos
+        // 3. Emisión hacia PSE / SUNAT con tolerancia a fallos.
+        //
+        // La llamada al proveedor no ocurre dentro del limite transaccional:
+        // es una llamada externa, lenta y fuera del control del sistema, y
+        // mantener una transaccion abierta mientras espera bloquearia
+        // recursos de la base de datos sin ninguna garantia.
         ResultadoDeclaracion resultado;
+        boolean emitido = false;
         try {
             resultado = emisorTributarioPort.emitirComprobante(comprobante);
-            attemptRepositoryPort.save(IntegrationAttempt.ok(
+            emitido = true;
+        } catch (Exception e) {
+            log.warn("Fallo al comunicar con PSE/SUNAT ({}: {}). Derivando a cola de reintento.", command.comprobanteId(), e.getMessage());
+
+            // El registro del intento y el encolado del reintento se
+            // confirman juntos: un intento sin tarea de reintento es un
+            // cobro perdido, y una tarea de reintento sin su intento es un
+            // reenvio sin trazabilidad.
+            unitOfWork.runInTransaction(() -> {
+                attemptRepositoryPort.save(IntegrationAttempt.retry(
+                        command.tenantId(),
+                        ProviderType.APISUNAT,
+                        "EMIT_VOUCHER",
+                        command.comprobanteId(),
+                        1,
+                        e.getMessage()
+                ));
+
+                // Guardar en cola de reintentos (Exponential backoff con payload completo serializado)
+                retryQueueRepositoryPort.save(RetryTask.create(
+                        command.tenantId(),
+                        ProviderType.APISUNAT,
+                        "EMIT_VOUCHER",
+                        command.comprobanteId(),
+                        serializeCommand(command),
+                        5
+                ));
+            });
+
+            resultado = ResultadoDeclaracion.pendiente("Servicio tributario no disponible temporalmente. Comprobante encolado para reintento automático.");
+        }
+
+        if (emitido) {
+            unitOfWork.runInTransaction(() -> attemptRepositoryPort.save(IntegrationAttempt.ok(
                     command.tenantId(),
                     ProviderType.APISUNAT,
                     "EMIT_VOUCHER",
                     command.comprobanteId(),
                     1
-            ));
-        } catch (Exception e) {
-            log.warn("Fallo al comunicar con PSE/SUNAT ({}: {}). Derivando a cola de reintento.", command.comprobanteId(), e.getMessage());
-
-            attemptRepositoryPort.save(IntegrationAttempt.retry(
-                    command.tenantId(),
-                    ProviderType.APISUNAT,
-                    "EMIT_VOUCHER",
-                    command.comprobanteId(),
-                    1,
-                    e.getMessage()
-            ));
-
-            // Guardar en cola de reintentos (Exponential backoff con payload completo serializado)
-            retryQueueRepositoryPort.save(RetryTask.create(
-                    command.tenantId(),
-                    ProviderType.APISUNAT,
-                    "EMIT_VOUCHER",
-                    command.comprobanteId(),
-                    serializeCommand(command),
-                    5
-            ));
-
-            resultado = ResultadoDeclaracion.pendiente("Servicio tributario no disponible temporalmente. Comprobante encolado para reintento automático.");
+            )));
         }
 
         // 4. Guardar registro de idempotencia
@@ -175,12 +195,12 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
                 false
         );
 
-        idempotencyRepositoryPort.save(IdempotencyRecord.of(
+        unitOfWork.runInTransaction(() -> idempotencyRepositoryPort.save(IdempotencyRecord.of(
                 command.tenantId(),
                 IdempotencyScope.VOUCHER,
                 idempotencyKey,
                 serializeResult(finalResult)
-        ));
+        )));
 
         return finalResult;
     }
@@ -195,13 +215,13 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
         ResultadoDeclaracion resultado;
         try {
             resultado = emisorTributarioPort.anularComprobante(tipo, serie, numero, motivo);
-            attemptRepositoryPort.save(IntegrationAttempt.ok(
+            unitOfWork.runInTransaction(() -> attemptRepositoryPort.save(IntegrationAttempt.ok(
                     tenantId,
                     ProviderType.APISUNAT,
                     "VOID_VOUCHER",
                     comprobanteId,
                     1
-            ));
+            )));
         } catch (Exception e) {
             log.warn("Error al anular comprobante en APISUNAT ({}): {}", comprobanteId, e.getMessage());
             resultado = ResultadoDeclaracion.rechazado("500", "Fallo al comunicar anulación con APISUNAT: " + e.getMessage());

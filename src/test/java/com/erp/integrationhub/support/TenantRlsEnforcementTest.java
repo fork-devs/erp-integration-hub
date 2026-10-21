@@ -3,6 +3,7 @@ package com.erp.integrationhub.support;
 import com.erp.integrationhub.domain.model.IdempotencyRecord;
 import com.erp.integrationhub.domain.model.IdempotencyScope;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
+import com.erp.integrationhub.domain.port.UnitOfWork;
 import com.erp.integrationhub.infrastructure.persistence.rls.TenantContextHolder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -35,6 +36,9 @@ class TenantRlsEnforcementTest extends AbstractPostgresIntegrationTest {
     @Autowired
     private IdempotencyRepositoryPort idempotencyRepositoryPort;
 
+    @Autowired
+    private UnitOfWork unitOfWork;
+
     @AfterEach
     void tearDown() {
         TenantContextHolder.clear();
@@ -60,8 +64,9 @@ class TenantRlsEnforcementTest extends AbstractPostgresIntegrationTest {
         TenantContextHolder.setTenantId(TALLER_PROPIO);
 
         assertThrows(RuntimeException.class, () ->
-                        idempotencyRepositoryPort.save(IdempotencyRecord.of(
-                                TALLER_AJENO, IdempotencyScope.PAYMENT, "clave-de-otro", "{}")),
+                        unitOfWork.runInTransaction(() ->
+                                idempotencyRepositoryPort.save(IdempotencyRecord.of(
+                                        TALLER_AJENO, IdempotencyScope.PAYMENT, "clave-de-otro", "{}"))),
                 "Escribir una fila de otro taller debe rechazarse");
     }
 
@@ -69,8 +74,8 @@ class TenantRlsEnforcementTest extends AbstractPostgresIntegrationTest {
     void unaLecturaDeOtroTallerNoDevuelveFilas() {
         // Se escribe una fila del taller propio con el contexto correspondiente.
         TenantContextHolder.setTenantId(TALLER_PROPIO);
-        idempotencyRepositoryPort.save(IdempotencyRecord.of(
-                TALLER_PROPIO, IdempotencyScope.PAYMENT, "clave-propia", "{}"));
+        unitOfWork.runInTransaction(() -> idempotencyRepositoryPort.save(IdempotencyRecord.of(
+                TALLER_PROPIO, IdempotencyScope.PAYMENT, "clave-propia", "{}")));
 
         // Con el contexto de otro taller, la fila propia no es visible.
         TenantContextHolder.setTenantId(TALLER_AJENO);

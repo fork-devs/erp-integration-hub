@@ -5,6 +5,7 @@ import com.erp.integrationhub.domain.model.ProviderType;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import com.erp.integrationhub.support.DirectUnitOfWork;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -37,7 +38,8 @@ class WebhookProcessingServiceTest {
         webhookProcessingService = new WebhookProcessingService(
                 secretKey,
                 secretKey,
-                attemptRepositoryPort
+                attemptRepositoryPort,
+                DirectUnitOfWork.INSTANCE
         );
     }
 

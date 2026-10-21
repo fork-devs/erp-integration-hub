@@ -13,6 +13,7 @@ import com.erp.integrationhub.domain.model.SolicitudCobro;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
+import com.erp.integrationhub.domain.port.UnitOfWork;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,14 +26,17 @@ public class PaymentIntegrationService implements ProcesarPagoUseCase {
     private final PasarelaDePagoPort pasarelaDePagoPort;
     private final IdempotencyRepositoryPort idempotencyRepositoryPort;
     private final IntegrationAttemptRepositoryPort attemptRepositoryPort;
+    private final UnitOfWork unitOfWork;
 
     public PaymentIntegrationService(
             PasarelaDePagoPort pasarelaDePagoPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
-            IntegrationAttemptRepositoryPort attemptRepositoryPort) {
+            IntegrationAttemptRepositoryPort attemptRepositoryPort,
+            UnitOfWork unitOfWork) {
         this.pasarelaDePagoPort = pasarelaDePagoPort;
         this.idempotencyRepositoryPort = idempotencyRepositoryPort;
         this.attemptRepositoryPort = attemptRepositoryPort;
+        this.unitOfWork = unitOfWork;
     }
 
     @Override
@@ -64,31 +68,20 @@ public class PaymentIntegrationService implements ProcesarPagoUseCase {
                 command.idempotencyKey()
         );
 
-        // 3. Procesar cobro en pasarela (Stripe)
-        ResultadoPago resultado;
+        // 3. Procesar cobro en pasarela (Stripe). La llamada al proveedor NO
+        // ocurre dentro de la transaccion: es una llamada externa, lenta y
+        // fuera del control del sistema, y mantener abierta una transaccion
+        // mientras espera bloquearia recursos de la base de datos sin
+        // ninguna garantia.
+        ResultadoPago resultadoDelProveedor;
         try {
-            resultado = pasarelaDePagoPort.procesarCobro(solicitud);
-            attemptRepositoryPort.save(IntegrationAttempt.ok(
-                    command.tenantId(),
-                    ProviderType.STRIPE,
-                    "CHARGE",
-                    command.paymentId(),
-                    1
-            ));
+            resultadoDelProveedor = pasarelaDePagoPort.procesarCobro(solicitud);
         } catch (Exception e) {
             log.error("Fallo al procesar cobro en pasarela: {}", e.getMessage());
-            attemptRepositoryPort.save(IntegrationAttempt.retry(
-                    command.tenantId(),
-                    ProviderType.STRIPE,
-                    "CHARGE",
-                    command.paymentId(),
-                    1,
-                    e.getMessage()
-            ));
-            resultado = ResultadoPago.fallido(e.getMessage());
+            resultadoDelProveedor = ResultadoPago.fallido(e.getMessage());
         }
+        final ResultadoPago resultado = resultadoDelProveedor;
 
-        // 4. Guardar respuesta en tabla de idempotencia
         PagoResult finalResult = new PagoResult(
                 command.paymentId(),
                 resultado.exitoso(),
@@ -100,12 +93,35 @@ public class PaymentIntegrationService implements ProcesarPagoUseCase {
                 false
         );
 
-        idempotencyRepositoryPort.save(IdempotencyRecord.of(
-                command.tenantId(),
-                IdempotencyScope.PAYMENT,
-                command.idempotencyKey(),
-                serializeResult(finalResult)
-        ));
+        // 4. El registro del intento y el registro de idempotencia se
+        // confirman juntos. Antes eran dos escrituras en dos transacciones:
+        // si la escritura de idempotencia fallaba despues de haber
+        // registrado el intento, quedaba un cobro sin su clave de
+        // idempotencia, y la siguiente peticion con la misma clave se
+        // cobraria de nuevo.
+        unitOfWork.runInTransaction(() -> {
+            attemptRepositoryPort.save(resultado.exitoso()
+                    ? IntegrationAttempt.ok(
+                            command.tenantId(),
+                            ProviderType.STRIPE,
+                            "CHARGE",
+                            command.paymentId(),
+                            1)
+                    : IntegrationAttempt.retry(
+                            command.tenantId(),
+                            ProviderType.STRIPE,
+                            "CHARGE",
+                            command.paymentId(),
+                            1,
+                            resultado.mensajeError()));
+
+            idempotencyRepositoryPort.save(IdempotencyRecord.of(
+                    command.tenantId(),
+                    IdempotencyScope.PAYMENT,
+                    command.idempotencyKey(),
+                    serializeResult(finalResult)
+            ));
+        });
 
         return finalResult;
     }

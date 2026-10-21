@@ -10,6 +10,7 @@ import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import com.erp.integrationhub.support.DirectUnitOfWork;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -50,7 +51,8 @@ class PaymentIntegrationServiceTest {
         paymentIntegrationService = new PaymentIntegrationService(
                 pasarelaDePagoPort,
                 idempotencyRepositoryPort,
-                attemptRepositoryPort
+                attemptRepositoryPort,
+                DirectUnitOfWork.INSTANCE
         );
     }
 

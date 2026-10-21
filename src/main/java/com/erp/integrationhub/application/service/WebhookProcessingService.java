@@ -10,6 +10,7 @@ import com.erp.integrationhub.domain.model.IdempotencyScope;
 import com.erp.integrationhub.domain.model.IntegrationAttempt;
 import com.erp.integrationhub.domain.model.ProviderType;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
+import com.erp.integrationhub.domain.port.UnitOfWork;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,24 +35,28 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
     private final IntegrationAttemptRepositoryPort attemptRepositoryPort;
     private final IdempotencyRepositoryPort idempotencyRepositoryPort;
     private final ObjectMapper objectMapper;
+    private final UnitOfWork unitOfWork;
 
     public WebhookProcessingService(
             String stripeWebhookSecret,
             String apisunatWebhookSecret,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
-            IdempotencyRepositoryPort idempotencyRepositoryPort) {
+            IdempotencyRepositoryPort idempotencyRepositoryPort,
+            UnitOfWork unitOfWork) {
         this.stripeWebhookSecret = stripeWebhookSecret != null ? stripeWebhookSecret.trim() : "";
         this.apisunatWebhookSecret = apisunatWebhookSecret != null ? apisunatWebhookSecret.trim() : "";
         this.attemptRepositoryPort = attemptRepositoryPort;
         this.idempotencyRepositoryPort = idempotencyRepositoryPort;
         this.objectMapper = new ObjectMapper().findAndRegisterModules();
+        this.unitOfWork = unitOfWork;
     }
 
     public WebhookProcessingService(
             String stripeWebhookSecret,
             String apisunatWebhookSecret,
-            IntegrationAttemptRepositoryPort attemptRepositoryPort) {
-        this(stripeWebhookSecret, apisunatWebhookSecret, attemptRepositoryPort, null);
+            IntegrationAttemptRepositoryPort attemptRepositoryPort,
+            UnitOfWork unitOfWork) {
+        this(stripeWebhookSecret, apisunatWebhookSecret, attemptRepositoryPort, null, unitOfWork);
     }
 
     @Override
@@ -121,12 +126,15 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
                                 null,
                                 false
                         );
-                        idempotencyRepositoryPort.save(IdempotencyRecord.of(
-                                effectiveTenantId,
+                        final String payloadPago = objectMapper.writeValueAsString(updatedPago);
+                        final UUID tenantDestino = effectiveTenantId;
+                        final UUID referenciaDestino = referenceId;
+                        unitOfWork.runInTransaction(() -> idempotencyRepositoryPort.save(IdempotencyRecord.of(
+                                tenantDestino,
                                 IdempotencyScope.PAYMENT,
-                                referenceId.toString(),
-                                objectMapper.writeValueAsString(updatedPago)
-                        ));
+                                referenciaDestino.toString(),
+                                payloadPago
+                        )));
                     }
                 }
             } else {
@@ -161,12 +169,15 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
                             hash,
                             false
                     );
-                    idempotencyRepositoryPort.save(IdempotencyRecord.of(
-                            effectiveTenantId,
+                    final String payloadComprobante = objectMapper.writeValueAsString(updatedResult);
+                    final UUID tenantDestino = effectiveTenantId;
+                    final UUID referenciaDestino = referenceId;
+                    unitOfWork.runInTransaction(() -> idempotencyRepositoryPort.save(IdempotencyRecord.of(
+                            tenantDestino,
                             IdempotencyScope.VOUCHER,
-                            referenceId.toString(),
-                            objectMapper.writeValueAsString(updatedResult)
-                    ));
+                            referenciaDestino.toString(),
+                            payloadComprobante
+                    )));
                 }
             }
         } catch (Exception e) {

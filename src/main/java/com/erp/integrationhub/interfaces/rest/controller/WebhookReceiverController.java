@@ -43,7 +43,9 @@ public class WebhookReceiverController {
             @RequestHeader(value = "X-Nubefact-Signature", required = false) String signature,
             @RequestBody String payload) {
 
-        boolean processed = processWebhooksUseCase.processWebhook(ProviderType.NUBEFACT, payload, signature);
+        // El aviso es de SUNAT: Nubefact lo transporta, pero la autoridad
+        // fiscal que lo emite es SUNAT.
+        boolean processed = processWebhooksUseCase.processWebhook(ProviderType.APISUNAT, payload, signature);
         return ResponseEntity.ok(Map.of(
                 "received", true,
                 "processed", processed

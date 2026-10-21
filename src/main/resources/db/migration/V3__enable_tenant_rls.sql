@@ -120,7 +120,6 @@ GRANT USAGE ON SCHEMA public TO erp_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE idempotency_keys TO erp_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE integration_attempts TO erp_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE integration_retry_tasks TO erp_app;
-GRANT SELECT ON TABLE provider_configs TO erp_app;
 
 -- --- Comprobacion -----------------------------------------------------------
 

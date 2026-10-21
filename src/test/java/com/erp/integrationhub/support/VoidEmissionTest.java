@@ -75,7 +75,8 @@ class VoidEmissionTest extends AbstractPostgresIntegrationTest {
                 idempotencyRepositoryPort,
                 attemptRepositoryPort,
                 retryQueueRepositoryPort,
-                unitOfWork);
+                unitOfWork,
+                mock(com.erp.integrationhub.domain.port.VoucherNumberingPort.class));
     }
 
     @Test

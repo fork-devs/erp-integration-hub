@@ -52,6 +52,9 @@ class ElectronicInvoicingServiceTest {
     @Mock
     private RetryQueueRepositoryPort retryQueueRepositoryPort;
 
+    @Mock
+    private com.erp.integrationhub.domain.port.VoucherNumberingPort numberingPort;
+
     private ElectronicInvoicingService electronicInvoicingService;
 
     private final UUID tenantId = UUID.randomUUID();
@@ -64,7 +67,8 @@ class ElectronicInvoicingServiceTest {
                 idempotencyRepositoryPort,
                 attemptRepositoryPort,
                 retryQueueRepositoryPort,
-                DirectUnitOfWork.INSTANCE
+                DirectUnitOfWork.INSTANCE,
+                numberingPort
         );
     }
 

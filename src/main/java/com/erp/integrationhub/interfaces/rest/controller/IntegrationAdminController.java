@@ -3,6 +3,7 @@ package com.erp.integrationhub.interfaces.rest.controller;
 import com.erp.integrationhub.application.usecase.ProcessRetryQueueUseCase;
 import com.erp.integrationhub.domain.model.AttemptStatus;
 import com.erp.integrationhub.domain.model.IntegrationAttempt;
+import com.erp.integrationhub.domain.usecase.ReactivateRetryTaskUseCase;
 import com.erp.integrationhub.domain.model.RetryTask;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
@@ -18,6 +19,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -41,13 +43,17 @@ public class IntegrationAdminController {
     private final RetryQueueRepositoryPort retryQueueRepositoryPort;
     private final ProcessRetryQueueUseCase processRetryQueueUseCase;
 
+    private final ReactivateRetryTaskUseCase reactivateRetryTaskUseCase;
+
     public IntegrationAdminController(
+            ReactivateRetryTaskUseCase reactivateRetryTaskUseCase,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             RetryQueueRepositoryPort retryQueueRepositoryPort,
             ProcessRetryQueueUseCase processRetryQueueUseCase) {
         this.attemptRepositoryPort = attemptRepositoryPort;
         this.retryQueueRepositoryPort = retryQueueRepositoryPort;
         this.processRetryQueueUseCase = processRetryQueueUseCase;
+        this.reactivateRetryTaskUseCase = reactivateRetryTaskUseCase;
     }
 
     @GetMapping("/attempts")
@@ -142,6 +148,19 @@ public class IntegrationAdminController {
                 .toList();
 
         return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/dlq/{id}/reactivate")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
+    @Operation(summary = "Reactivar una tarea en cola de muertos",
+            description = "Devuelve la tarea a la cola de pendientes con el contador de intentos restablecido")
+    public ResponseEntity<Map<String, Object>> reactivateTask(@PathVariable UUID id) {
+        RetryTask task = reactivateRetryTaskUseCase.reactivate(id);
+        return ResponseEntity.ok(Map.of(
+                "id", task.getId().toString(),
+                "status", task.getStatus(),
+                "attempts", task.getAttemptsCount(),
+                "nextRetryAt", String.valueOf(task.getNextRetryAt())));
     }
 
     @PostMapping("/retry/trigger")

@@ -81,6 +81,21 @@ public class RetryTask implements Serializable {
         }
     }
 
+    /**
+     * Devuelve la tarea a la cola de pendientes, con el contador de intentos
+     * restablecido.
+     *
+     * <p>Se usa desde la cola de muertos: la tarea ya no se reintentaba sola,
+     * y un operador la reactiva cuando la causa del fallo se ha resuelto.
+     */
+    public void reactivate() {
+        this.attemptsCount = 0;
+        this.status = "PENDING";
+        this.lastError = null;
+        this.nextRetryAt = Instant.now();
+        this.updatedAt = Instant.now();
+    }
+
     public void markCompleted() {
         this.status = "COMPLETED";
         this.updatedAt = Instant.now();
@@ -102,14 +117,32 @@ public class RetryTask implements Serializable {
         this.updatedAt = Instant.now();
     }
 
+    /**
+     * Escala de esperas, en segundos. Es CONFIGURABLE: la ventana total de
+     * reintentos depende de ella, y una ventana fija no sirve para los
+     * proveedores con caracteristicas distintas.
+     *
+     * <p>La escala por defecto suma unas 23,6 horas, que es la ventana de
+     * recuperacion que el diseno del proyecto fija para una caida de
+     * proveedor.
+     */
+    public static final long[] ESCALA_POR_DEFECTO = {5, 30, 300, 1800, 10800, 28800, 45000};
+
     private long calculateBackoffSeconds(int attempt) {
-        return switch (attempt) {
-            case 1 -> 5L;
-            case 2 -> 30L;
-            case 3 -> 300L;    // 5 min
-            case 4 -> 1800L;   // 30 min
-            default -> 7200L;  // 2 horas (hasta 24h acumuladas)
-        };
+        long[] escala = ESCALA_POR_DEFECTO;
+        int indice = Math.min(Math.max(attempt - 1, 0), escala.length - 1);
+        return escala[indice];
+    }
+
+    /**
+     * Suma de las esperas de la escala: la ventana total de reintentos.
+     */
+    public static long ventanaTotalSegundos(long[] escala) {
+        long total = 0;
+        for (long espera : escala) {
+            total += espera;
+        }
+        return total;
     }
 
     public UUID getId() {

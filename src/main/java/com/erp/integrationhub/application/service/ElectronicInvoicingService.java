@@ -22,6 +22,7 @@ import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
 import com.erp.integrationhub.domain.port.UnitOfWork;
+import com.erp.integrationhub.domain.port.VoucherNumberingPort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,6 +34,12 @@ import java.util.stream.Collectors;
 
 public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
 
+    /**
+     * Numero maximo de intentos de una operacion encolada. Con la escala de
+     * esperas por defecto, siete intentos cubren una ventana de unas 24 horas.
+     */
+    public static final int MAX_INTENTOS_REINTENTO = 7;
+
     private static final Logger log = LoggerFactory.getLogger(ElectronicInvoicingService.class);
 
     private final EmisorTributarioPort emisorTributarioPort;
@@ -41,19 +48,22 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
     private final RetryQueueRepositoryPort retryQueueRepositoryPort;
     private final ObjectMapper objectMapper;
     private final UnitOfWork unitOfWork;
+    private final VoucherNumberingPort voucherNumberingPort;
 
     public ElectronicInvoicingService(
             EmisorTributarioPort emisorTributarioPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             RetryQueueRepositoryPort retryQueueRepositoryPort,
-            UnitOfWork unitOfWork) {
+            UnitOfWork unitOfWork,
+            VoucherNumberingPort voucherNumberingPort) {
         this.emisorTributarioPort = emisorTributarioPort;
         this.idempotencyRepositoryPort = idempotencyRepositoryPort;
         this.attemptRepositoryPort = attemptRepositoryPort;
         this.retryQueueRepositoryPort = retryQueueRepositoryPort;
         this.objectMapper = new ObjectMapper().findAndRegisterModules();
         this.unitOfWork = unitOfWork;
+        this.voucherNumberingPort = voucherNumberingPort;
     }
 
     @Override
@@ -148,6 +158,13 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
                 command.fechaEmision()
         );
 
+        // 2 bis. Reservar la numeracion ANTES de contactar al proveedor. La
+        // numeracion es la identidad fiscal del comprobante: si dos emisiones
+        // simultaneas comparten serie y numero, la autoridad fiscal ve un
+        // duplicado. Comprobarlo despues del contacto seria tarde.
+        unitOfWork.runInTransaction(() -> voucherNumberingPort.reserve(
+                command.tenantId(), command.serie(), command.numero(), command.comprobanteId()));
+
         // 3. Emisión hacia PSE / SUNAT con tolerancia a fallos.
         //
         // La llamada al proveedor no ocurre dentro del limite transaccional:
@@ -188,8 +205,7 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
                         ProviderType.APISUNAT,
                         "EMIT_VOUCHER",
                         command.comprobanteId(),
-                        serializeCommand(command),
-                        5
+                        serializeCommand(command),MAX_INTENTOS_REINTENTO
                 ));
             });
 

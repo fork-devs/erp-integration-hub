@@ -8,6 +8,8 @@ import com.erp.integrationhub.infrastructure.persistence.rls.PlatformScopeQueryE
 import com.erp.integrationhub.infrastructure.persistence.repository.SpringDataRetryTaskRepository;
 import org.springframework.data.domain.PageRequest;
 import com.erp.integrationhub.infrastructure.persistence.TransactionGuard;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,6 +24,8 @@ import java.util.stream.Collectors;
 
 @Component
 public class RetryQueuePersistenceAdapter implements RetryQueueRepositoryPort {
+
+    private static final Logger log = LoggerFactory.getLogger(RetryQueuePersistenceAdapter.class);
 
     private final TransactionGuard transactionGuard;
     private final SpringDataRetryTaskRepository repository;
@@ -38,6 +42,15 @@ public class RetryQueuePersistenceAdapter implements RetryQueueRepositoryPort {
     @Override
     public RetryTask save(RetryTask task) {
         transactionGuard.requireActiveTransaction("saveRetryTask");
+        // El relay recorre la cola de TODOS los talleres: su escritura tiene
+        // que usar el mismo alcance que su lectura. Con el rol de aplicacion,
+        // el ahorro de una tarea de otro taller violaria la politica de
+        // aislamiento, y el relay fallaria al guardar la tarea de un taller
+        // que no es el suyo.
+        if (actualizarConRolDePlataforma(task)) {
+            return task;
+        }
+
         RetryTaskJpaEntity entity = toEntity(task);
         RetryTaskJpaEntity saved = repository.save(entity);
         return toDomain(saved);
@@ -72,6 +85,32 @@ public class RetryQueuePersistenceAdapter implements RetryQueueRepositoryPort {
     @Transactional(readOnly = true)
     public Optional<RetryTask> findById(UUID id) {
         return repository.findById(id).map(this::toDomain);
+    }
+
+    /**
+     * Actualiza la tarea con el rol de plataforma.
+     *
+     * @return true si la actualizacion se ha hecho
+     */
+    private boolean actualizarConRolDePlataforma(RetryTask task) {
+        if (task.getId() == null) {
+            return false;
+        }
+        try {
+            int actualizadas = platformScopeQueryExecutor.update(
+                    "UPDATE integration_retry_tasks SET status = ?, attempts_count = ?, next_retry_at = ?, "
+                            + "last_error = ?, updated_at = ? WHERE id = ?",
+                    task.getStatus(),
+                    task.getAttemptsCount(),
+                    Timestamp.from(task.getNextRetryAt() != null ? task.getNextRetryAt() : Instant.now()),
+                    task.getLastError(),
+                    Timestamp.from(java.time.Instant.now()),
+                    task.getId());
+            return actualizadas > 0;
+        } catch (RuntimeException e) {
+            log.debug("La tarea {} no se actualiza con el rol de plataforma: {}", task.getId(), e.getMessage());
+            return false;
+        }
     }
 
     /**

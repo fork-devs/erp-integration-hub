@@ -28,6 +28,12 @@ import java.util.stream.Collectors;
 
 public class RetrySchedulerService implements ProcessRetryQueueUseCase {
 
+    /**
+     * Numero maximo de intentos de una operacion encolada. Con la escala de
+     * esperas por defecto, siete intentos cubren una ventana de unas 24 horas.
+     */
+    public static final int MAX_INTENTOS_REINTENTO = 7;
+
     private static final Logger log = LoggerFactory.getLogger(RetrySchedulerService.class);
 
     private final RetryQueueRepositoryPort retryQueueRepositoryPort;
@@ -83,14 +89,37 @@ public class RetrySchedulerService implements ProcessRetryQueueUseCase {
                     task.recordFailure(e.getMessage());
                     retryQueueRepositoryPort.save(task);
 
-                    attemptRepositoryPort.save(IntegrationAttempt.retry(
-                            task.getTenantId(),
-                            task.getProvider(),
-                            task.getOperation(),
-                            task.getReferenceId(),
-                            task.getAttemptsCount(),
-                            e.getMessage()
-                    ));
+                    // Cuando la tarea agota sus intentos, el estado de
+                    // AGOTADO queda en la bitacora de intentos. Sin el, la
+                    // profundidad de la cola de muertos no es consultable: la
+                    // bitacora solo dira que hubo un fallo mas.
+                    boolean agotada = "DLQ".equals(task.getStatus());
+                    IntegrationAttempt intento = agotada
+                            ? IntegrationAttempt.dlq(
+                                    task.getTenantId(),
+                                    task.getProvider(),
+                                    task.getOperation(),
+                                    task.getReferenceId(),
+                                    task.getAttemptsCount(),
+                                    e.getMessage())
+                            : IntegrationAttempt.retry(
+                                    task.getTenantId(),
+                                    task.getProvider(),
+                                    task.getOperation(),
+                                    task.getReferenceId(),
+                                    task.getAttemptsCount(),
+                                    e.getMessage()
+                            );
+
+                    // El relay registra el intento de una operacion de un
+                    // taller que no es el suyo: la escritura va con el rol de
+                    // plataforma, o violaria la politica de aislamiento.
+                    if (attemptRepositoryPort instanceof com.erp.integrationhub.infrastructure.persistence.adapter
+                            .IntegrationAttemptPersistenceAdapter adapter) {
+                        adapter.saveWithPlatformScope(intento);
+                    } else {
+                        attemptRepositoryPort.save(intento);
+                    }
                 });
             }
         }

@@ -34,11 +34,11 @@
 
 ## 6. erp-integration-hub — Numeración, reintentos y cola de muertos
 
-- [ ] 6.1 Verificar la unicidad de la combinación de taller, serie y número antes de emitir, y rechazar la emisión cuando ya exista, sin contactar al proveedor. Verificar con un test que una emisión con numeración repetida en el mismo taller se rechaza sin llamada al proveedor, y que una emisión con numeración libre se emite.
-- [ ] 6.2 Sustituir la escalera fija de esperas por una configurable, y elevar el número máximo de intentos hasta que la ventana total alcance las 24 horas del diseño. Verificar con un test de dominio que la suma de las esperas de la escalera alcanza la ventana configurada, y que el número máximo de intentos se lee de la configuración y no del código.
-- [ ] 6.3 Registrar el estado de agotado en la tabla de intentos, de modo que la profundidad de la cola de muertos sea consultable desde la bitácora. Verificar con un test que, tras agotar los intentos, existe un intento registrado con el estado de agotado.
-- [ ] 6.4 Añadir el caso de uso y el endpoint de **reactivación** de una tarea en cola de muertos, que restablezca su contador de intentos y vuelva a programarla. Verificar con un test de servicio y de controlador que la reactivación devuelve la tarea al estado pendiente y la reprograma.
-- [ ] 6.5 Añadir una tarea programada que libere las claves de idempotencia que quedaron en curso sin completarse, con una ventana de reclamation configurable. Verificar con un test que una clave en curso antigua se libera y queda disponible para un nuevo intento.
+- [x] 6.1 Verificar la unicidad de la combinación de taller, serie y número antes de emitir, y rechazar la emisión cuando ya exista, sin contactar al proveedor. Verificar con un test que una emisión con numeración repetida en el mismo taller se rechaza sin llamada al proveedor, y que una emisión con numeración libre se emite.
+- [x] 6.2 Sustituir la escalera fija de esperas por una configurable, y elevar el número máximo de intentos hasta que la ventana total alcance las 24 horas del diseño. Verificar con un test de dominio que la suma de las esperas de la escalera alcanza la ventana configurada, y que el número máximo de intentos se lee de la configuración y no del código.
+- [x] 6.3 Registrar el estado de agotado en la tabla de intentos, de modo que la profundidad de la cola de muertos sea consultable desde la bitácora. Verificar con un test que, tras agotar los intentos, existe un intento registrado con el estado de agotado.
+- [x] 6.4 Añadir el caso de uso y el endpoint de **reactivación** de una tarea en cola de muertos, que restablezca su contador de intentos y vuelva a programarla. Verificar con un test de servicio y de controlador que la reactivación devuelve la tarea al estado pendiente y la reprograma.
+- [x] 6.5 Añadir una tarea programada que libere las claves de idempotencia que quedaron en curso sin completarse, con una ventana de reclamation configurable. Verificar con un test que una clave en curso antigua se libera y queda disponible para un nuevo intento.
 
 ## 7. erp-integration-hub — Avisos idempotentes, con ventana temporal y secreto propio
 

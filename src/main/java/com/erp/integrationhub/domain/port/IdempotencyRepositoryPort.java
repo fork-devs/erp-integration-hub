@@ -38,4 +38,17 @@ public interface IdempotencyRepositoryPort {
     IdempotencyRecord updateByKey(UUID tenantId, IdempotencyScope scope, String key, IdempotencyRecord record);
 
     IdempotencyRecord save(IdempotencyRecord record);
+
+    /**
+     * Libera las claves que quedaron EN CURSO y no se completaron.
+     *
+     * <p>Una clave en curso bloquea la operacion: la peticion siguiente
+     * encuentra la clave ocupada y no vuelve a llamar al proveedor. Si el
+     * proceso que la reclamo muere, la clave se queda en curso para siempre.
+     *
+     * @param anterior solo se liberan las claves en curso anteriores a este
+     *                  instante
+     * @return el numero de claves liberadas
+     */
+    int releaseStaleProgress(java.time.Instant anterior);
 }

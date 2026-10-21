@@ -89,7 +89,15 @@ END
 $$;
 
 GRANT USAGE ON SCHEMA public TO erp_platform;
-GRANT SELECT ON TABLE integration_retry_tasks TO erp_platform;
+-- El relay recorre la cola de TODOS los talleres, de modo que necesita
+-- tambien ESCRIBIR sobre ella: si solo puede leer, el ahorro de la tarea de
+-- un taller que no es el suyo viola la politica de aislamiento, y el relay
+-- falla al guardar la tarea.
+GRANT SELECT, UPDATE ON TABLE integration_retry_tasks TO erp_platform;
+-- El relay registra tambien el intento de una operacion de un taller que no
+-- es el suyo: sin permiso de escritura, el registro del intento violaria la
+-- politica de aislamiento.
+GRANT SELECT, INSERT ON TABLE integration_attempts TO erp_platform;
 
 -- --- Rol de ejecucion de la aplicacion -------------------------------------
 -- La aplicacion deja de conectar con el propietario: el propietario de una

@@ -33,4 +33,28 @@ public class PlatformScopeQueryExecutor {
     public List<Map<String, Object>> query(String sql, Object... args) {
         return jdbcTemplate.queryForList(sql, args);
     }
+
+    /**
+     * Ejecuta una actualizacion con el rol de plataforma.
+     *
+     * <p>El relay de reintentos recorre la cola de TODOS los talleres, de
+     * modo que sus ESCRITURAS tienen que usar el mismo alcance que sus
+     * lecturas. Con el rol de aplicacion, el ahorro de una tarea de otro
+     * taller violaria la politica de aislamiento, y el relay fallaria al
+     * guardar la tarea de un taller que no es el suyo.
+     */
+    public int update(String sql, Object... args) {
+        return jdbcTemplate.update(sql, args);
+    }
+
+    /**
+     * Inserta una fila con el rol de plataforma.
+     *
+     * <p>Lo necesita el relay de reintentos, que registra el intento de una
+     * operacion de un taller que no es el suyo: con el rol de aplicacion, la
+     * escritura violaria la politica de aislamiento.
+     */
+    public void insert(String sql, Object... args) {
+        jdbcTemplate.update(sql, args);
+    }
 }

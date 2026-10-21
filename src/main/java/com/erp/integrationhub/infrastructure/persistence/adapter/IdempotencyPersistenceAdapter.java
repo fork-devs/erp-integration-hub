@@ -119,6 +119,12 @@ public class IdempotencyPersistenceAdapter implements IdempotencyRepositoryPort 
     }
 
     @Override
+    public int releaseStaleProgress(java.time.Instant anterior) {
+        transactionGuard.requireActiveTransaction("releaseStaleIdempotencyKeys");
+        return repository.releaseStaleProgress(anterior);
+    }
+
+    @Override
     public IdempotencyRecord save(IdempotencyRecord record) {
         transactionGuard.requireActiveTransaction("saveIdempotencyRecord");
         IdempotencyKeyJpaEntity entity = toEntity(record);

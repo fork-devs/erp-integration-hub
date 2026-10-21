@@ -77,6 +77,8 @@ class VoucherRetryAtomicityTest extends AbstractPostgresIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        // El contexto de taller es por hilo: cada test establece el suyo, o
+        // hereda el de otro y escribe en el taller equivocado.
         TenantContextHolder.setTenantId(TALLER);
         when(emisorTributarioPortStub.emitirComprobante(any()))
                 .thenReturn(com.erp.integrationhub.domain.model.ResultadoDeclaracion.aceptado(

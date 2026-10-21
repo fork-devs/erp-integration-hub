@@ -4,6 +4,7 @@ import com.erp.integrationhub.application.dto.command.EmitirComprobanteCommand;
 import com.erp.integrationhub.application.dto.command.ItemComprobanteCommand;
 import com.erp.integrationhub.application.dto.result.ComprobanteResult;
 import com.erp.integrationhub.domain.model.ComprobanteParaDeclarar;
+import com.erp.integrationhub.domain.model.IdempotencyKeyState;
 import com.erp.integrationhub.domain.model.IdempotencyRecord;
 import com.erp.integrationhub.domain.model.IdempotencyScope;
 import com.erp.integrationhub.domain.model.ResultadoDeclaracion;
@@ -145,7 +146,8 @@ class ElectronicInvoicingServiceTest {
         );
 
         String cachedJson = "{\"exitoso\":true,\"estadoSunat\":\"ACEPTADA\",\"codigo\":\"0\",\"mensaje\":\"Aceptada previamente\",\"pdfUrl\":\"https://storage.pe/pdf/F001-123.pdf\"}";
-        IdempotencyRecord existingRecord = new IdempotencyRecord(UUID.randomUUID(), tenantId, IdempotencyScope.VOUCHER, "idem-key-001", "hash", cachedJson, null);
+        IdempotencyRecord existingRecord = new IdempotencyRecord(UUID.randomUUID(), tenantId, IdempotencyScope.VOUCHER, "idem-key-001", null, "hash", cachedJson,
+                IdempotencyKeyState.COMPLETED, java.time.Instant.now());
 
         when(idempotencyRepositoryPort.findByTenantAndScopeAndKey(tenantId, IdempotencyScope.VOUCHER, "idem-key-001"))
                 .thenReturn(Optional.of(existingRecord));

@@ -2,6 +2,7 @@ package com.erp.integrationhub.application.service;
 
 import com.erp.integrationhub.application.dto.command.ProcesarPagoCommand;
 import com.erp.integrationhub.application.dto.result.PagoResult;
+import com.erp.integrationhub.domain.model.IdempotencyKeyState;
 import com.erp.integrationhub.domain.model.IdempotencyRecord;
 import com.erp.integrationhub.domain.model.IdempotencyScope;
 import com.erp.integrationhub.domain.model.ResultadoPago;
@@ -108,7 +109,8 @@ class PaymentIntegrationServiceTest {
         );
 
         String cachedJson = "{\"exitoso\":true,\"estado\":\"PAID\",\"chargeId\":\"ch_cached_123\",\"clientSecret\":null,\"codigoAutorizacion\":\"AUTH-0001\",\"mensajeError\":null}";
-        IdempotencyRecord record = new IdempotencyRecord(UUID.randomUUID(), tenantId, IdempotencyScope.PAYMENT, "idem-pay-cached", "hash", cachedJson, null);
+        IdempotencyRecord record = new IdempotencyRecord(UUID.randomUUID(), tenantId, IdempotencyScope.PAYMENT, "idem-pay-cached", null, "hash", cachedJson,
+                IdempotencyKeyState.COMPLETED, java.time.Instant.now());
 
         when(idempotencyRepositoryPort.findByTenantAndScopeAndKey(tenantId, IdempotencyScope.PAYMENT, "idem-pay-cached"))
                 .thenReturn(Optional.of(record));

@@ -68,11 +68,18 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
             byte[] expectedBytes = internalServiceKey.getBytes(StandardCharsets.UTF_8);
             byte[] actualBytes = internalKeyHeader.trim().getBytes(StandardCharsets.UTF_8);
             if (MessageDigest.isEqual(expectedBytes, actualBytes)) {
+                // La credencial compartida identifica al servicio, no a un
+                // administrador de plataforma. Antes concedia tambien
+                // ROLE_ADMIN, con lo que podia listar los intentos y la cola
+                // de muertos de TODOS los talleres. El alcance transversal
+                // para operar sobre un taller concreto se mantiene, que es lo
+                // que el servicio necesita, pero la administracion de la
+                // plataforma queda reservada al superadministrador.
                 authenticatedUser = new AuthenticatedUser(
                         UUID.randomUUID(),
                         null,
                         "internal-service",
-                        Set.of("ROLE_INTERNAL_SERVICE", "ROLE_ADMIN"),
+                        Set.of("ROLE_INTERNAL_SERVICE"),
                         true
                 );
             }
@@ -190,7 +197,7 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
         if (tenantIdHeader != null && !tenantIdHeader.isBlank()) {
             try {
                 UUID requestedTenantId = UUID.fromString(tenantIdHeader.trim());
-                if (!authenticatedUser.canAccessTenant(requestedTenantId)) {
+                if (!authenticatedUser.canOperateOnTenant(requestedTenantId)) {
                     log.warn("Violación de aislamiento multi-tenant: Usuario con tenant {} intentó acceder al tenant {}",
                             authenticatedUser.tenantId(), requestedTenantId);
                     sendErrorResponse(response, HttpServletResponse.SC_FORBIDDEN,

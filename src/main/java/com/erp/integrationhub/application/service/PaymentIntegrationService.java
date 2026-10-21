@@ -1,6 +1,7 @@
 package com.erp.integrationhub.application.service;
 
 import com.erp.integrationhub.application.dto.command.ProcesarPagoCommand;
+import com.erp.integrationhub.application.logging.SecurityEventLogger;
 import com.erp.integrationhub.application.dto.result.PagoResult;
 import com.erp.integrationhub.application.usecase.ProcesarPagoUseCase;
 import com.erp.integrationhub.domain.model.IdempotencyRecord;
@@ -122,6 +123,9 @@ public class PaymentIntegrationService implements ProcesarPagoUseCase {
                     serializeResult(finalResult)
             ));
         });
+
+        SecurityEventLogger.registrar("cobro_procesado", command.tenantId(), null, null,
+                finalResult.exitoso() ? "ok" : "fallo", java.util.Map.of("pago", command.paymentId().toString()));
 
         return finalResult;
     }

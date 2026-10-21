@@ -86,6 +86,22 @@ public class RetryTask implements Serializable {
         this.updatedAt = Instant.now();
     }
 
+    /**
+     * Mueve la tarea a la cola de muertos, que es un estado TERMINAL: la
+     * tarea no se reintentara sola.
+     *
+     * <p>Se usa cuando la operacion con el proveedor YA se llevo a cabo, pero
+     * el registro local no pudo escribirse. Reintentar la tarea reenviaria la
+     * operacion al proveedor, que ya la acepto: el resultado seria una
+     * operacion duplicada. Es preferible una tarea que exige atencion
+     * manual a un duplicado.
+     */
+    public void markDeadLetter(String reason) {
+        this.status = "DLQ";
+        this.lastError = reason;
+        this.updatedAt = Instant.now();
+    }
+
     private long calculateBackoffSeconds(int attempt) {
         return switch (attempt) {
             case 1 -> 5L;

@@ -13,6 +13,7 @@ import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import com.erp.integrationhub.support.DirectUnitOfWork;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -59,7 +60,8 @@ class RetrySchedulerServiceTest {
                 attemptRepositoryPort,
                 idempotencyRepositoryPort,
                 emisorTributarioPort,
-                pasarelaDePagoPort
+                pasarelaDePagoPort,
+                DirectUnitOfWork.INSTANCE
         );
     }
 

@@ -66,6 +66,10 @@ erp:
     #   erp.security.internal-service.roles.<servicio>
     keys:
       erp-fleet-service: ${INTEGRATION_HUB_KEY_FLEET:}
+    roles:
+      # fleet valida identidad y vehiculo contra el hub: el rol es acotado a
+      # esa operacion, y no alcanza las operaciones administrativas.
+      erp-fleet-service: ROLE_FLEET
     platform-role:
       # Rol con BYPASSRLS, usado EXCLUSIVAMENTE por el relay de reintentos
       # para recorrer la cola de todos los talleres.

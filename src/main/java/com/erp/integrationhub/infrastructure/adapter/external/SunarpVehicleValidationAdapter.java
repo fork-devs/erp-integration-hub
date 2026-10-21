@@ -41,20 +41,6 @@ public class SunarpVehicleValidationAdapter implements ValidadorVehicularPort {
         String sanitizedPlaca = placa.trim().toUpperCase().replace("-", "");
 
         // Modo sandbox si la credencial es de prueba/mock
-        if (sandboxMode && (token.contains("mock") || token.contains("sandbox") || token.isBlank())) {
-            return new ConsultaPlacaResult(
-                    sanitizedPlaca,
-                    "TOYOTA",
-                    "COROLLA XLI 1.8",
-                    "9BRBD48E9E8012345",
-                    "2ZR-FE-9876543",
-                    "2021",
-                    "PLATA METALICO",
-                    "GASOLINA / GNV",
-                    true
-            );
-        }
-
         // Llamada HTTP Real al API de SUNARP
         try {
             String targetUrl = baseUrl.endsWith("/") ? baseUrl + "placa" : baseUrl + "/placa";

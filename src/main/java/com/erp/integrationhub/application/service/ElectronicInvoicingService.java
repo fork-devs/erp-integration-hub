@@ -165,12 +165,18 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
             // cobro perdido, y una tarea de reintento sin su intento es un
             // reenvio sin trazabilidad.
             unitOfWork.runInTransaction(() -> {
+                // El numero de intento es la PROGRESION real: la bitacora
+                // dice cuantas veces se ha intentado, y no siempre "a la
+                // primera".
+                int numeroDeIntento = 1 + attemptRepositoryPort.countAttempts(
+                        command.tenantId(), ProviderType.APISUNAT, "EMIT_VOUCHER", command.comprobanteId());
+
                 attemptRepositoryPort.save(IntegrationAttempt.retry(
                         command.tenantId(),
                         ProviderType.APISUNAT,
                         "EMIT_VOUCHER",
                         command.comprobanteId(),
-                        1,
+                        numeroDeIntento,
                         e.getMessage()
                 ));
 
@@ -189,13 +195,20 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
         }
 
         if (emitido) {
-            unitOfWork.runInTransaction(() -> attemptRepositoryPort.save(IntegrationAttempt.ok(
-                    command.tenantId(),
-                    ProviderType.APISUNAT,
-                    "EMIT_VOUCHER",
-                    command.comprobanteId(),
-                    1
-            )));
+            // El intento correcto se consigna SOLO si se ha contactado con el
+            // proveedor: un intento correcto sin llamada es una operacion
+            // que no ocurrio.
+            unitOfWork.runInTransaction(() -> {
+                int numeroDeIntento = 1 + attemptRepositoryPort.countAttempts(
+                        command.tenantId(), ProviderType.APISUNAT, "EMIT_VOUCHER", command.comprobanteId());
+                attemptRepositoryPort.save(IntegrationAttempt.ok(
+                        command.tenantId(),
+                        ProviderType.APISUNAT,
+                        "EMIT_VOUCHER",
+                        command.comprobanteId(),
+                        numeroDeIntento
+                ));
+            });
         }
 
         // 4. Guardar registro de idempotencia

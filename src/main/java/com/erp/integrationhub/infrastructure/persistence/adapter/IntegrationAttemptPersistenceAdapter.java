@@ -37,6 +37,13 @@ public class IntegrationAttemptPersistenceAdapter implements IntegrationAttemptR
 
     @Override
     @Transactional(readOnly = true)
+    public int countAttempts(UUID tenantId, ProviderType provider, String operation, UUID referenceId) {
+        return repository.countByTenantIdAndProviderAndOperationAndReferenceId(
+                tenantId, provider.name(), operation, referenceId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public List<IntegrationAttempt> findByTenantIdAndReferenceId(UUID tenantId, UUID referenceId) {
         return repository.findByTenantIdAndReferenceId(tenantId, referenceId).stream()
                 .map(this::toDomain)

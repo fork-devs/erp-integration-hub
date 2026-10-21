@@ -21,9 +21,9 @@
 
 ## 4. erp-integration-hub — El resultado declarado es el resultado real
 
-- [ ] 4.1 Extraer de los cuatro adaptadores de producción (`ApiSunatElectronicInvoicingAdapter`, `ChequeaPeRucValidationAdapter`, `StripePaymentGatewayAdapter`, `SunarpVehicleValidationAdapter`) la rama que fabrica respuestas, y trasladarla a adapters simulados completos registrados por perfil de entorno. Verificar con un test de integración que, con el perfil de desarrollo, el hub opera contra el adapter simulado y con el perfil de producción, el adapter real es el registrado.
-- [ ] 4.2 Hacer que el arranque **falle de forma explícita** cuando haya un adapter simulado registrado en un perfil que no sea de desarrollo. Verificar con un test de arranque que el perfil de producción con un adapter simulado no levanta el contexto, y que el perfil de desarrollo sí.
-- [ ] 4.3 Corregir el registro de intentos para que no consigne un intento correcto cuando no se ha producido una llamada al proveedor, y para que el número de intento refleje la progresión real. Verificar con un test que un fallo anterior a la llamada al proveedor no deja ningún intento correcto registrado, y que el número de intento de la segunda ejecución es dos.
+- [x] 4.1 Extraer de los cuatro adaptadores de producción (`ApiSunatElectronicInvoicingAdapter`, `ChequeaPeRucValidationAdapter`, `StripePaymentGatewayAdapter`, `SunarpVehicleValidationAdapter`) la rama que fabrica respuestas, y trasladarla a adapters simulados completos registrados por perfil de entorno. Verificar con un test de integración que, con el perfil de desarrollo, el hub opera contra el adapter simulado y con el perfil de producción, el adapter real es el registrado.
+- [x] 4.2 Hacer que el arranque **falle de forma explícita** cuando haya un adapter simulado registrado en un perfil que no sea de desarrollo. Verificar con un test de arranque que el perfil de producción con un adapter simulado no levanta el contexto, y que el perfil de desarrollo sí.
+- [x] 4.3 Corregir el registro de intentos para que no consigne un intento correcto cuando no se ha producido una llamada al proveedor, y para que el número de intento refleje la progresión real. Verificar con un test que un fallo anterior a la llamada al proveedor no deja ningún intento correcto registrado, y que el número de intento de la segunda ejecución es dos.
 
 ## 5. erp-integration-hub — Los estados del comprobante y la anulación
 

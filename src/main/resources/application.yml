@@ -64,6 +64,11 @@ erp:
       user: ${ERP_PLATFORM_ROLE_USER:erp_platform}
       password: ${ERP_PLATFORM_ROLE_PASSWORD:erp_platform_local_password}
   integration:
+    # Adaptadores de proveedor SIMULADOS. Solo admisibles en un perfil de
+    # desarrollo: fuera de el, el arranque falla de forma explicita. Un
+    # adaptador simulado fabrica respuestas que no corresponden a ningun
+    # proveedor real.
+    simulated-adapters: ${SIMULATED_ADAPTERS:false}
     apisunat:
       base-url: ${APISUNAT_BASE_URL:https://sandbox.apisunat.pe}
       token: ${APISUNAT_TOKEN:sandbox_token_apisunat}

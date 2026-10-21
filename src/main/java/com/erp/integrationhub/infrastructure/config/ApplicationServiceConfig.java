@@ -76,26 +76,6 @@ public class ApplicationServiceConfig {
     }
 
     @Bean
-    public EmisorTributarioPort emisorTributarioPort() {
-        return new ApiSunatElectronicInvoicingAdapter(apisunatBaseUrl, apisunatToken, apisunatSandboxMode);
-    }
-
-    @Bean
-    public PasarelaDePagoPort pasarelaDePagoPort() {
-        return new StripePaymentGatewayAdapter(stripeApiKey, stripeSandboxMode);
-    }
-
-    @Bean
-    public ValidadorIdentidadPort validadorIdentidadPort() {
-        return new ChequeaPeRucValidationAdapter(chequeaBaseUrl, chequeaToken, chequeaSandboxMode);
-    }
-
-    @Bean
-    public ValidadorVehicularPort validadorVehicularPort() {
-        return new SunarpVehicleValidationAdapter(apiperuBaseUrl, apiperuToken, apiperuSandboxMode);
-    }
-
-    @Bean
     public ElectronicInvoicingService electronicInvoicingService(
             EmisorTributarioPort emisorTributarioPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,

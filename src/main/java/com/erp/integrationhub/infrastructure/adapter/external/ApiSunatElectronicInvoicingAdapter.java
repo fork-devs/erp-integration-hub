@@ -51,24 +51,6 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
                 comprobante.getClienteDenominacion(), comprobante.getClienteNumDoc());
 
         // Modo sandbox si la credencial es de prueba o mock
-        if (sandboxMode && (token.contains("mock") || token.contains("sandbox") || token.isBlank())) {
-            String hash = "4HY34uR7a+Vc1Ax3/zrUk1Ng+tjTLwlqa9mRFysy15E=";
-            String cleanDoc = comprobante.getClienteNumDoc() != null ? comprobante.getClienteNumDoc() : "20123456789";
-            String code = comprobante.getTipo().name().startsWith("F") ? "01" : "03";
-            String cdrUrl = String.format("https://apisunat.pe/R-%s-%s-%s-%d.xml", cleanDoc, code, comprobante.getSerie(), comprobante.getNumero());
-            String xmlUrl = String.format("https://apisunat.pe/%s-%s-%s-%d.xml", cleanDoc, code, comprobante.getSerie(), comprobante.getNumero());
-            String pdfUrl = String.format("https://apisunat.pe/pdf/a4/%s-%s-%s-%d", cleanDoc, code, comprobante.getSerie(), comprobante.getNumero());
-
-            return ResultadoDeclaracion.aceptado(
-                    "0",
-                    "El comprobante fue enviado y aceptado por SUNAT.",
-                    pdfUrl,
-                    xmlUrl,
-                    cdrUrl,
-                    hash
-            );
-        }
-
         // Llamada HTTP Real al API v3 de APISUNAT
         try {
             String targetUrl = baseUrl.endsWith("/") ? baseUrl + "api/v3/documents" : baseUrl + "/api/v3/documents";
@@ -102,10 +84,6 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
     @Override
     public ResultadoDeclaracion anularComprobante(String tipo, String serie, int numero, String motivo) {
         log.info("[APISUNAT ACL] Solicitando anulación/baja de {} {}-{} por motivo: {}", tipo, serie, numero, motivo);
-
-        if (sandboxMode && (token.contains("mock") || token.contains("sandbox") || token.isBlank())) {
-            return ResultadoDeclaracion.anulado("0", "El comprobante fue dado de baja exitosamente en SUNAT.", "BAJA-" + UUID.randomUUID().toString().substring(0, 8));
-        }
 
         try {
             boolean isBoleta = tipo != null && tipo.toLowerCase().contains("boleta");
@@ -153,10 +131,6 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
 
     @Override
     public ResultadoDeclaracion consultarEstadoComprobante(String tipo, String serie, int numero) {
-        if (sandboxMode && (token.contains("mock") || token.contains("sandbox") || token.isBlank())) {
-            return ResultadoDeclaracion.aceptado("0", "El comprobante fue enviado y aceptado por SUNAT.", null, null, null, null);
-        }
-
         try {
             String targetUrl = baseUrl.endsWith("/") ? baseUrl + "api/v3/status" : baseUrl + "/api/v3/status";
             String docTipo = tipo != null ? tipo.toLowerCase() : "factura";

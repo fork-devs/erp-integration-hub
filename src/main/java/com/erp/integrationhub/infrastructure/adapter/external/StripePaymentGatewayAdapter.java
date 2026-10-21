@@ -39,12 +39,6 @@ public class StripePaymentGatewayAdapter implements PasarelaDePagoPort {
                 solicitud.getMoneda(), solicitud.getMonto(), solicitud.getIdempotencyKey());
 
         // Si estamos en modo sandbox con clave simulada (sin credencial real), devolvemos respuesta simulada
-        if (sandboxMode && (apiKey.contains("mock") || apiKey.contains("sandbox") || apiKey.isBlank())) {
-            String chargeId = "pi_" + UUID.randomUUID().toString().replace("-", "").substring(0, 18);
-            String authCode = "AUTH_" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
-            return ResultadoPago.exitoso(chargeId, authCode);
-        }
-
         // Integración Real con API de Stripe
         try {
             long amountInCents = solicitud.getMonto().multiply(BigDecimal.valueOf(100)).longValue();
@@ -100,10 +94,6 @@ public class StripePaymentGatewayAdapter implements PasarelaDePagoPort {
 
     @Override
     public ResultadoPago consultarEstadoPago(String chargeId) {
-        if (sandboxMode && (apiKey.contains("mock") || apiKey.contains("sandbox") || apiKey.isBlank())) {
-            return ResultadoPago.exitoso(chargeId, "AUTH_CONFIRMED");
-        }
-
         try {
             RequestOptions options = RequestOptions.builder().setApiKey(apiKey).build();
             PaymentIntent paymentIntent = PaymentIntent.retrieve(chargeId, options);

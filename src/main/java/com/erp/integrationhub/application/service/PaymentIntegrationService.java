@@ -147,19 +147,24 @@ public class PaymentIntegrationService implements ProcesarPagoUseCase {
         // de negocio, de modo que no inserta una fila nueva: el resultado
         // llega a la fila que ya fue reclamada.
         unitOfWork.runInTransaction(() -> {
+            // El numero de intento es la PROGRESION real: la bitacora dice
+            // cuantas veces se ha intentado, y no siempre "a la primera".
+            int numeroDeIntento = 1 + attemptRepositoryPort.countAttempts(
+                    command.tenantId(), ProviderType.STRIPE, "CHARGE", command.paymentId());
+
             attemptRepositoryPort.save(resultado.exitoso()
                     ? IntegrationAttempt.ok(
                             command.tenantId(),
                             ProviderType.STRIPE,
                             "CHARGE",
                             command.paymentId(),
-                            1)
+                            numeroDeIntento)
                     : IntegrationAttempt.retry(
                             command.tenantId(),
                             ProviderType.STRIPE,
                             "CHARGE",
                             command.paymentId(),
-                            1,
+                            numeroDeIntento,
                             resultado.mensajeError()));
 
             String payload = serializeResult(finalResult);

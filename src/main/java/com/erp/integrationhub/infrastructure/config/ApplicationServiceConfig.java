@@ -124,8 +124,13 @@ public class ApplicationServiceConfig {
     public WebhookProcessingService webhookProcessingService(
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
+            com.erp.integrationhub.domain.port.ProcessedWebhookRepositoryPort processedWebhookRepositoryPort,
+            @Value("${erp.integration.webhook.signing-secret:}") String webhookSigningSecret,
+            @Value("${erp.integration.webhook.window-seconds:300}") long ventanaTemporalSegundos,
             UnitOfWork unitOfWork) {
-        return new WebhookProcessingService(stripeWebhookSecret, apisunatToken, attemptRepositoryPort, idempotencyRepositoryPort, unitOfWork);
+        return new WebhookProcessingService(stripeWebhookSecret, apisunatToken, attemptRepositoryPort,
+                idempotencyRepositoryPort, processedWebhookRepositoryPort, webhookSigningSecret,
+                ventanaTemporalSegundos, unitOfWork);
     }
 
     @Bean

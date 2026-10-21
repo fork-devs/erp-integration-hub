@@ -53,6 +53,14 @@ spring:
 erp:
   security:
     internal-service-key: ${INTERNAL_SERVICE_KEY:}
+  webhook:
+    # Clave de firma de los avisos, PROPIA y distinta de la credencial de
+    # acceso al proveedor: con la misma clave, quien tiene la credencial del
+    # proveedor podria fabricar avisos.
+    signing-secret: ${WEBHOOK_SIGNING_SECRET:}
+    # Ventana temporal admitida para un aviso, en segundos. Un aviso fuera de
+    # la ventana se rechaza: su firma es valida, pero el aviso es viejo.
+    window-seconds: ${WEBHOOK_WINDOW_SECONDS:300}
     # La URL del conjunto de claves debe usar un esquema cifrado. El arranque
     # falla de forma explicita si no lo hace, y la unica excepcion es el
     # perfil de desarrollo local (application-dev.yml).

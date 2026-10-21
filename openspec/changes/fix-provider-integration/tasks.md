@@ -42,10 +42,10 @@
 
 ## 7. erp-integration-hub — Avisos idempotentes, con ventana temporal y secreto propio
 
-- [ ] 7.1 Registrar cada aviso procesado con su identificador de evento único y rechazar los duplicados, en `WebhookProcessingService`. Verificar con un test que la reentrega del mismo aviso se detecta como duplicada y que el efecto se aplica una sola vez.
-- [ ] 7.2 Escribir la actualización de estado que aporta el aviso bajo la **misma clave de idempotencia** de la operación original, en lugar de bajo el identificador de la referencia. Verificar con un test que, tras un aviso, la reproducción de la operación devuelve el estado actualizado.
-- [ ] 7.3 Aplicar la comprobación de la **ventana temporal** del aviso a todas las rutas de firma, no sólo a la de Stripe, y rechazar el aviso fuera de la ventana. Verificar con un test que un aviso de la ruta estándar con marca de tiempo antigua se rechaza.
-- [ ] 7.4 Introducir una clave de firma de avisos **propia**, distinta de la credencial de acceso al proveedor, con su propia configuración, y rechazar los avisos firmados con la credencial del proveedor. Verificar con un test que un aviso firmado con la credencial de acceso del proveedor se rechaza.
+- [x] 7.1 Registrar cada aviso procesado con su identificador de evento único y rechazar los duplicados, en `WebhookProcessingService`. Verificar con un test que la reentrega del mismo aviso se detecta como duplicada y que el efecto se aplica una sola vez.
+- [x] 7.2 Escribir la actualización de estado que aporta el aviso bajo la **misma clave de idempotencia** de la operación original, en lugar de bajo el identificador de la referencia. Verificar con un test que, tras un aviso, la reproducción de la operación devuelve el estado actualizado.
+- [x] 7.3 Aplicar la comprobación de la **ventana temporal** del aviso a todas las rutas de firma, no sólo a la de Stripe, y rechazar el aviso fuera de la ventana. Verificar con un test que un aviso de la ruta estándar con marca de tiempo antigua se rechaza.
+- [x] 7.4 Introducir una clave de firma de avisos **propia**, distinta de la credencial de acceso al proveedor, con su propia configuración, y rechazar los avisos firmados con la credencial del proveedor. Verificar con un test que un aviso firmado con la credencial de acceso del proveedor se rechaza.
 
 ## 8. erp-integration-hub — Identidad interna acotada y límite de las consultas de identidad
 

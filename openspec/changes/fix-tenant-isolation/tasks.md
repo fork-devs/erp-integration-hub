@@ -49,7 +49,7 @@
 - [x] 5.4 Unificar el patrón de resolución de tenant en `IntegrationAdminController` (`erp-integration-hub/src/main/java/com/erp/integrationhub/interfaces/rest/controller/IntegrationAdminController.java:56,63,103`) con el de los demás controladores del hub, sin el tenant por defecto. Verificar con un test que la consulta de intentos y la de DLQ sin cabecera devuelven el tenant del principal.
 - [x] 5.5 Crear la migración `V3__enable_tenant_rls.sql` en el hub: aplicar `FORCE ROW LEVEL SECURITY` y crear las políticas de aislamiento sobre `idempotency_keys`, `integration_attempts` e `integration_retry_tasks`, con `tenant_id` en las tres. Verificar con `SELECT relforcerowsecurity FROM pg_class` que las tres tablas quedan con la política forzada.
 - [x] 5.6 Introducir en el hub el mismo mecanismo de contexto de tenant que en los otros dos servicios, con `SET LOCAL` dentro de la transacción y fallo cerrado ante ausencia de contexto. Verificar con un test de integración que una escritura sin contexto de tenant no persiste fila alguna.
-- [ ] 5.7 Añadir en el hub los tests cross-tenant de los tres vectores y el test que comprueba que ninguna tabla del hub contiene el identificador de tenant formado por ceros. Verificar que los casos de cruce resultan en denegación y que la consulta de las tres tablas no devuelve filas con ese identificador.
+- [x] 5.7 Añadir en el hub los tests cross-tenant de los tres vectores y el test que comprueba que ninguna tabla del hub contiene el identificador de tenant formado por ceros. Verificar que los casos de cruce resultan en denegación y que la consulta de las tres tablas no devuelve filas con ese identificador.
 
 ## 6. Verificación transversal y documentación
 

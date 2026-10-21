@@ -11,6 +11,7 @@ import com.erp.integrationhub.interfaces.rest.support.TenantResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
@@ -43,27 +45,24 @@ public class PaymentIntegrationController {
     @Operation(summary = "Process a credit/debit card payment via Stripe", description = "Executes charge with Stripe token and deterministic idempotency lock")
     public ResponseEntity<PagoResponse> processCharge(
             @RequestHeader(value = "X-Tenant-ID", required = false) UUID requestedTenantId,
-            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyHeader,
+            @RequestHeader(value = "Idempotency-Key") String idempotencyHeader,
             @Valid @RequestBody ProcesarPagoRequest request) {
 
         UUID tenantId = TenantResolver.resolveForOperation(requestedTenantId, AuthenticatedUserHolder.current());
 
-        // Deterministic Idempotency Key derivation to prevent duplicate card charges
-        String effectiveIdempotencyKey;
-        if (idempotencyHeader != null && !idempotencyHeader.isBlank()) {
-            effectiveIdempotencyKey = idempotencyHeader.trim();
-        } else if (request.paymentId() != null) {
-            effectiveIdempotencyKey = request.paymentId().toString();
-        } else {
-            // Deterministic hash based on payment transaction parameters
-            String seed = String.format("charge:%s:%s:%.2f:%s",
-                    tenantId,
-                    request.tokenTarjeta(),
-                    request.monto() != null ? request.monto().doubleValue() : 0.0,
-                    request.clienteEmail() != null ? request.clienteEmail().trim().toLowerCase() : ""
-            );
-            effectiveIdempotencyKey = UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8)).toString();
+        // La clave de idempotencia es OBLIGATORIA, y la aporta el cliente.
+        //
+        // Antes se derivaba de los datos del cobro. Con la derivacion, la
+        // clave era la misma para dos cobros identicos del mismo cliente, de
+        // modo que el segundo se tomato por una repeticion del primero y NO
+        // se cobraba: el cliente pagaba una vez por dos servicios. La clave
+        // tiene que distinguir una peticion de otra, y solo el cliente puede
+        // hacerlo.
+        if (idempotencyHeader == null || idempotencyHeader.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "La cabecera Idempotency-Key es obligatoria para procesar un cobro");
         }
+        String effectiveIdempotencyKey = idempotencyHeader.trim();
 
         UUID effectivePaymentId = request.paymentId() != null
                 ? request.paymentId()

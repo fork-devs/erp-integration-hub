@@ -16,8 +16,8 @@
 
 ## 3. erp-integration-hub — La clave de idempotencia es obligatoria en el cobro
 
-- [ ] 3.1 Cambiar `PaymentIntegrationController` (`erp-integration-hub/src/main/java/com/erp/integrationhub/interfaces/rest/controller/PaymentIntegrationController.java:36,41-54`) para que la cabecera de clave de idempotencia sea **obligatoria**, y eliminar la derivación automática a partir de tenant, tarjeta, importe y correo. Verificar con un test de controlador que un cobro sin la cabecera se rechaza con `400` y que **no** se crea ningún intento registrado.
-- [ ] 3.2 Eliminar del modelo de dominio y de los adaptadores cualquier rastro de la derivación de la clave. Verificar con un grep que no queda ninguna referencia a la derivación y que ningún cobro puede llegar al proveedor sin una clave explícita.
+- [x] 3.1 Cambiar `PaymentIntegrationController` (`erp-integration-hub/src/main/java/com/erp/integrationhub/interfaces/rest/controller/PaymentIntegrationController.java:36,41-54`) para que la cabecera de clave de idempotencia sea **obligatoria**, y eliminar la derivación automática a partir de tenant, tarjeta, importe y correo. Verificar con un test de controlador que un cobro sin la cabecera se rechaza con `400` y que **no** se crea ningún intento registrado.
+- [x] 3.2 Eliminar del modelo de dominio y de los adaptadores cualquier rastro de la derivación de la clave. Verificar con un grep que no queda ninguna referencia a la derivación y que ningún cobro puede llegar al proveedor sin una clave explícita.
 
 ## 4. erp-integration-hub — El resultado declarado es el resultado real
 

@@ -66,11 +66,15 @@ public class IntegrationAdminController {
         }
 
         // Validación estricta de acceso al tenant: usuarios regulares/tenant admins no pueden consultar globalmente
-        if (tenantId == null && (authUser == null || (!authUser.isInternalService() && !authUser.isSuperAdmin()))) {
+        // Sin taller, solo quien tiene alcance transversal puede consultar en
+        // global. La credencial compartida de servicio interno ya no concede
+        // este alcance: es una credencial de servicio, no de administracion de
+        // plataforma.
+        if (tenantId == null && (authUser == null || !authUser.isSuperAdmin())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
-        if (tenantId != null && authUser != null && !authUser.canAccessTenant(tenantId)) {
+        if (tenantId != null && authUser != null && !authUser.canOperateOnTenant(tenantId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
@@ -109,11 +113,15 @@ public class IntegrationAdminController {
             tenantId = authUser.tenantId();
         }
 
-        if (tenantId == null && (authUser == null || (!authUser.isInternalService() && !authUser.isSuperAdmin()))) {
+        // Sin taller, solo quien tiene alcance transversal puede consultar en
+        // global. La credencial compartida de servicio interno ya no concede
+        // este alcance: es una credencial de servicio, no de administracion de
+        // plataforma.
+        if (tenantId == null && (authUser == null || !authUser.isSuperAdmin())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
-        if (tenantId != null && authUser != null && !authUser.canAccessTenant(tenantId)) {
+        if (tenantId != null && authUser != null && !authUser.canOperateOnTenant(tenantId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 

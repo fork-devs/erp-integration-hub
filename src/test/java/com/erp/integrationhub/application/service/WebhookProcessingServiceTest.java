@@ -30,6 +30,7 @@ class WebhookProcessingServiceTest {
     private WebhookProcessingService webhookProcessingService;
 
     private final String secretKey = "production_secret_key_123456";
+    private final String TENANT_ID = "11111111-1111-1111-1111-111111111111";
 
     @BeforeEach
     void setUp() {
@@ -43,7 +44,8 @@ class WebhookProcessingServiceTest {
     @Test
     @DisplayName("Should verify valid Stripe timestamped signature (t=...,v1=...) and process webhook")
     void processWebhook_WithValidStripeSignature_ShouldSucceed() throws Exception {
-        String payload = "{\"event\":\"payment_intent.succeeded\",\"id\":\"pi_123\"}";
+        String payload = "{\"event\":\"payment_intent.succeeded\",\"id\":\"pi_123\","
+                + "\"data\":{\"object\":{\"metadata\":{\"tenant_id\":\"" + TENANT_ID + "\"}}}}";
         long timestamp = java.time.Instant.now().getEpochSecond();
         String signedPayload = timestamp + "." + payload;
 
@@ -62,7 +64,8 @@ class WebhookProcessingServiceTest {
     @Test
     @DisplayName("Should verify valid standard HMAC-SHA256 signature for APISUNAT and process webhook")
     void processWebhook_WithValidApiSunatSignature_ShouldSucceed() throws Exception {
-        String payload = "{\"documento\":\"factura\",\"serie\":\"F001\",\"numero\":100}";
+        String payload = "{\"documento\":\"factura\",\"serie\":\"F001\",\"numero\":100,"
+                + "\"tenant_id\":\"" + TENANT_ID + "\"}";
 
         Mac hmac = Mac.getInstance("HmacSHA256");
         SecretKeySpec key = new SecretKeySpec(secretKey.getBytes(StandardCharsets.UTF_8), "HmacSHA256");

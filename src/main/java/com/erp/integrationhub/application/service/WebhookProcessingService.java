@@ -4,6 +4,7 @@ import com.erp.integrationhub.application.dto.result.ComprobanteResult;
 import com.erp.integrationhub.application.dto.result.PagoResult;
 import com.erp.integrationhub.application.usecase.ProcessWebhooksUseCase;
 import com.erp.integrationhub.domain.exception.InvalidSignatureException;
+import com.erp.integrationhub.domain.exception.TenantContextMissingException;
 import com.erp.integrationhub.domain.model.IdempotencyRecord;
 import com.erp.integrationhub.domain.model.IdempotencyScope;
 import com.erp.integrationhub.domain.model.IntegrationAttempt;
@@ -27,7 +28,6 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
 
     private static final Logger log = LoggerFactory.getLogger(WebhookProcessingService.class);
     private static final long STRIPE_TIMESTAMP_TOLERANCE_SECONDS = 300; // 5 minutes tolerance
-    public static final UUID SYSTEM_TENANT_ID = UUID.fromString("00000000-0000-0000-0000-000000000000");
 
     private final String stripeWebhookSecret;
     private final String apisunatWebhookSecret;
@@ -81,7 +81,7 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
         log.info("Procesando webhook verificado criptográficamente de {}: {}", provider, payload);
 
         // 2. Procesar lógica de negocio y actualizar estados
-        UUID effectiveTenantId = SYSTEM_TENANT_ID;
+        UUID effectiveTenantId = null;
         UUID referenceId = null;
 
         try {
@@ -171,6 +171,15 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
             }
         } catch (Exception e) {
             log.warn("Error al procesar contenido estructurado del webhook: {}", e.getMessage());
+        }
+
+        // El aviso se rechaza si no se puede determinar el taller al que
+        // pertenece. Antes se usaba un tenant ficticio formado por ceros, que
+        // contaminaba las tablas de idempotencia, de intentos y de cola de
+        // reintentos y hacia indistinguible un aviso sin taller de uno real.
+        if (effectiveTenantId == null) {
+            throw new TenantContextMissingException(
+                    "El aviso no indica el taller al que pertenece y no puede aplicarse.");
         }
 
         if (referenceId == null) {

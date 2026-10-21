@@ -49,9 +49,9 @@
 
 ## 8. erp-integration-hub — Identidad interna acotada y límite de las consultas de identidad
 
-- [ ] 8.1 Eliminar el privilegio de administrador de plataforma que la credencial compartida concede en `InternalServiceAuthenticationFilter`, e incorporar una **identidad por servicio** con un rol acotado a las operaciones que cada servicio necesita. Verificar con un test que un servicio interno sin el rol de administración recibe `403` al invocar una operación de administración, y que con el rol la ejecuta.
-- [ ] 8.2 Registrar en la bitácora **quién** ejecuta cada operación de administración, con la identidad del servicio. Verificar con un test que la operación registrada incluye la identidad del servicio que la ejecutó.
-- [ ] 8.3 Aplicar un **límite de peticiones por taller** a los endpoints de validación de identidad, e informar al cliente del tiempo de espera cuando se alcance. Verificar con un test que la consulta por encima del límite se rechaza con la cabecera de espera, y que la consulta dentro del límite se atiende.
+- [x] 8.1 Eliminar el privilegio de administrador de plataforma que la credencial compartida concede en `InternalServiceAuthenticationFilter`, e incorporar una **identidad por servicio** con un rol acotado a las operaciones que cada servicio necesita. Verificar con un test que un servicio interno sin el rol de administración recibe `403` al invocar una operación de administración, y que con el rol la ejecuta.
+- [x] 8.2 Registrar en la bitácora **quién** ejecuta cada operación de administración, con la identidad del servicio. Verificar con un test que la operación registrada incluye la identidad del servicio que la ejecutó.
+- [x] 8.3 Aplicar un **límite de peticiones por taller** a los endpoints de validación de identidad, e informar al cliente del tiempo de espera cuando se alcance. Verificar con un test que la consulta por encima del límite se rechaza con la cabecera de espera, y que la consulta dentro del límite se atiende.
 
 ## 9. Limpieza y verificación transversal
 

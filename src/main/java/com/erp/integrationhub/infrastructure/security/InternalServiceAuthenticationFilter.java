@@ -22,7 +22,10 @@ import java.security.interfaces.RSAPublicKey;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -33,11 +36,16 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
 
     private final String internalServiceKey;
     private final JwksKeyManager jwksKeyManager;
+    private final org.springframework.core.env.Environment environment;
 
-    public InternalServiceAuthenticationFilter(String internalServiceKey, JwksKeyManager jwksKeyManager) {
+    public InternalServiceAuthenticationFilter(
+            String internalServiceKey,
+            JwksKeyManager jwksKeyManager,
+            org.springframework.core.env.Environment environment) {
         String resolvedKey = SecretResolver.resolveSecret(internalServiceKey);
         this.internalServiceKey = (resolvedKey != null && !resolvedKey.isBlank()) ? resolvedKey.trim() : null;
         this.jwksKeyManager = jwksKeyManager;
+        this.environment = environment;
 
         if (this.internalServiceKey == null) {
             log.warn("ADVERTENCIA DE SEGURIDAD: INTERNAL_SERVICE_KEY no configurada. El bypass de servicios internos permanecerá deshabilitado.");
@@ -68,24 +76,32 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
             byte[] expectedBytes = internalServiceKey.getBytes(StandardCharsets.UTF_8);
             byte[] actualBytes = internalKeyHeader.trim().getBytes(StandardCharsets.UTF_8);
             if (MessageDigest.isEqual(expectedBytes, actualBytes)) {
-                // La credencial compartida identifica al servicio, no a un
+                // La credencial compartida identifica al SERVICIO, no a un
                 // administrador de plataforma. Antes concedia tambien
                 // ROLE_ADMIN, con lo que podia listar los intentos y la cola
                 // de muertos de TODOS los talleres. El alcance transversal
                 // para operar sobre un taller concreto se mantiene, que es lo
                 // que el servicio necesita, pero la administracion de la
                 // plataforma queda reservada al superadministrador.
+                //
+                // Ademas, la identidad es POR SERVICIO: cada servicio
+                // recibe solo los roles que su configuracion le concede. Con
+                // un rol unico para todos, cualquier servicio con la
+                // credencial podia hacer lo que hiciera cualquier otro.
+                String nombreServicio = request.getHeader("X-Internal-Service-Name");
                 authenticatedUser = new AuthenticatedUser(
                         UUID.randomUUID(),
                         null,
-                        "internal-service",
-                        Set.of("ROLE_INTERNAL_SERVICE"),
+                        nombreServicio != null && !nombreServicio.isBlank()
+                                ? nombreServicio.trim()
+                                : "internal-service",
+                        rolesDe(nombreServicio),
                         true
                 );
             }
         }
 
-        // 2. Validar Bearer JWT Token con verificación criptográfica RS256 contra JWKS
+    // 2. Validar Bearer JWT Token con verificación criptográfica RS256 contra JWKS
         if (authenticatedUser == null && authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7).trim();
             try {
@@ -254,4 +270,30 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
         );
         response.getWriter().write(json);
     }
+
+    /**
+     * Roles concedidos al servicio que llama.
+     *
+     * <p>Se configuran por servicio: {@code erp.security.internal-service.roles.<servicio>}. Un
+     * servicio sin configuracion recibe solo el rol transversal minimo.
+     */
+    private Set<String> rolesDe(String nombreServicio) {
+        if (nombreServicio == null || nombreServicio.isBlank()) {
+            return Set.of("ROLE_INTERNAL_SERVICE");
+        }
+        String clave = "erp.security.internal-service.roles." + nombreServicio.trim();
+        String configuracion = environment.getProperty(clave);
+        if (configuracion == null || configuracion.isBlank()) {
+            log.warn("El servicio interno {} no tiene roles configurados: recibe solo el rol transversal",
+                    nombreServicio);
+            return Set.of("ROLE_INTERNAL_SERVICE");
+        }
+        Set<String> roles = Arrays.stream(configuracion.split(","))
+                .map(String::trim)
+                .filter(rol -> !rol.isEmpty())
+                .map(rol -> rol.startsWith("ROLE_") ? rol : "ROLE_" + rol)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        return roles.isEmpty() ? Set.of("ROLE_INTERNAL_SERVICE") : roles;
+    }
+
 }

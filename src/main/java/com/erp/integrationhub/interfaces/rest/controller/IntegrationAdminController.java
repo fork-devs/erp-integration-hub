@@ -36,6 +36,9 @@ import java.util.UUID;
 @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
 public class IntegrationAdminController {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(IntegrationAdminController.class);
+
     private static final int MAX_LIMIT = 100;
     private static final int DEFAULT_LIMIT = 50;
 
@@ -117,6 +120,7 @@ public class IntegrationAdminController {
             @RequestParam(value = "limit", defaultValue = "50") int limit) {
 
         AuthenticatedUser authUser = getAuthenticatedUser();
+        registrarOperacion("consultar_cola_de_muertos", authUser, tenantId);
 
         if (tenantId == null && authUser != null && authUser.tenantId() != null) {
             tenantId = authUser.tenantId();
@@ -190,6 +194,20 @@ public class IntegrationAdminController {
         try (TenantContextScope scope = TenantContextScope.forTenant(tenantId)) {
             return operacion.get();
         }
+    }
+
+    /**
+     * Registra QUIEN ejecuta una operacion de administracion.
+     *
+     * <p>Con la identidad por servicio, la bitacora dice que servicio lo
+     * hizo, y no solo que se uso la credencial compartida.
+     */
+    private void registrarOperacion(String operacion, AuthenticatedUser authUser, UUID tenantId) {
+        String identidad = authUser != null && authUser.username() != null
+                ? authUser.username()
+                : "desconocida";
+        log.info("Operacion de administracion {} ejecutada por {} sobre el taller {}",
+                operacion, identidad, tenantId);
     }
 
     private AuthenticatedUser getAuthenticatedUser() {

@@ -37,7 +37,10 @@ class IdentityValidationControllerTest {
 
     @BeforeEach
     void setUp() {
-        IdentityValidationController controller = new IdentityValidationController(consultarRucUseCase, consultarPlacaUseCase);
+        IdentityValidationController controller = new IdentityValidationController(
+                consultarRucUseCase,
+                consultarPlacaUseCase,
+                new com.erp.integrationhub.infrastructure.security.TenantRateLimiter(60, 60));
         AuthenticatedUserContext.asTenant(UUID.randomUUID());
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalRestExceptionHandler())

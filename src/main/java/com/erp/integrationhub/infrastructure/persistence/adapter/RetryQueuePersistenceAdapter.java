@@ -44,7 +44,7 @@ public class RetryQueuePersistenceAdapter implements RetryQueueRepositoryPort {
     }
 
     @Override
-    @Transactional
+    @Transactional(readOnly = true)
     public List<RetryTask> findPendingTasks(Instant before, int limit) {
         // El relay recorre la cola de pendientes de TODOS los talleres: es un
         // proceso interno de la plataforma, no una operacion de un taller, y
@@ -61,7 +61,7 @@ public class RetryQueuePersistenceAdapter implements RetryQueueRepositoryPort {
     }
 
     @Override
-    @Transactional
+    @Transactional(readOnly = true)
     public List<RetryTask> findDlqTasks(UUID tenantId, int limit) {
         return repository.findByTenantIdAndStatusOrderByCreatedAtDesc(tenantId, "DLQ", PageRequest.of(0, limit)).stream()
                 .map(this::toDomain)
@@ -69,7 +69,7 @@ public class RetryQueuePersistenceAdapter implements RetryQueueRepositoryPort {
     }
 
     @Override
-    @Transactional
+    @Transactional(readOnly = true)
     public Optional<RetryTask> findById(UUID id) {
         return repository.findById(id).map(this::toDomain);
     }

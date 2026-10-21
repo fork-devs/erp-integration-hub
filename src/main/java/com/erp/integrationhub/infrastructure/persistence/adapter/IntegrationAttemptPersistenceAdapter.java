@@ -36,7 +36,7 @@ public class IntegrationAttemptPersistenceAdapter implements IntegrationAttemptR
     }
 
     @Override
-    @Transactional
+    @Transactional(readOnly = true)
     public List<IntegrationAttempt> findByTenantIdAndReferenceId(UUID tenantId, UUID referenceId) {
         return repository.findByTenantIdAndReferenceId(tenantId, referenceId).stream()
                 .map(this::toDomain)
@@ -44,7 +44,7 @@ public class IntegrationAttemptPersistenceAdapter implements IntegrationAttemptR
     }
 
     @Override
-    @Transactional
+    @Transactional(readOnly = true)
     public List<IntegrationAttempt> findByTenantId(UUID tenantId, int limit) {
         return repository.findByTenantIdOrderByCreatedAtDesc(tenantId, PageRequest.of(0, limit)).stream()
                 .map(this::toDomain)
@@ -52,7 +52,7 @@ public class IntegrationAttemptPersistenceAdapter implements IntegrationAttemptR
     }
 
     @Override
-    @Transactional
+    @Transactional(readOnly = true)
     public List<IntegrationAttempt> findByTenantIdAndStatus(UUID tenantId, AttemptStatus status, int limit) {
         return repository.findByTenantIdAndStatusOrderByCreatedAtDesc(tenantId, status.name(), PageRequest.of(0, limit)).stream()
                 .map(this::toDomain)

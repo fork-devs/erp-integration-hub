@@ -25,7 +25,7 @@ public class IdempotencyPersistenceAdapter implements IdempotencyRepositoryPort 
     }
 
     @Override
-    @Transactional
+    @Transactional(readOnly = true)
     public Optional<IdempotencyRecord> findByTenantAndScopeAndKey(UUID tenantId, IdempotencyScope scope, String key) {
         return repository.findByTenantIdAndScopeAndKey(tenantId, scope.name(), key).map(this::toDomain);
     }

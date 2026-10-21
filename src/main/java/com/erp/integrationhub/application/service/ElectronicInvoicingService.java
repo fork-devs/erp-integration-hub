@@ -5,6 +5,7 @@ import com.erp.integrationhub.application.dto.command.ItemComprobanteCommand;
 import com.erp.integrationhub.application.dto.result.ComprobanteResult;
 import com.erp.integrationhub.application.usecase.EmitirComprobanteUseCase;
 import com.erp.integrationhub.domain.model.ComprobanteParaDeclarar;
+import com.erp.integrationhub.domain.model.EstadoComprobante;
 import com.erp.integrationhub.domain.model.ComprobanteTipo;
 import com.erp.integrationhub.domain.exception.IdempotencyConflictException;
 import com.erp.integrationhub.domain.model.IdempotencyRecord;
@@ -84,12 +85,13 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
             ComprobanteResult cachedResult = deserializeResult(command.comprobanteId(), registroExistente.getResponsePayload(), true);
             
             // Si el comprobante estaba en estado PENDIENTE_SUNAT, verificar si ya fue procesado en SUNAT
-            if ("PENDIENTE_SUNAT".equalsIgnoreCase(cachedResult.estadoSunat()) || "PENDIENTE".equalsIgnoreCase(cachedResult.estadoSunat())) {
+            if (EstadoComprobante.PENDIENTE.name().equalsIgnoreCase(cachedResult.estadoSunat())
+                    || EstadoComprobante.PENDIENTE_SUNAT_ALIAS.equalsIgnoreCase(cachedResult.estadoSunat())) {
                 try {
                     ResultadoDeclaracion statusCheck = emisorTributarioPort.consultarEstadoComprobante(
                             command.tipo(), command.serie(), command.numero()
                     );
-                    if (statusCheck.exitoso() && "ACEPTADO".equalsIgnoreCase(statusCheck.estadoSunat())) {
+                    if (statusCheck.exitoso() && statusCheck.estado().emitido()) {
                         ComprobanteResult updatedResult = new ComprobanteResult(
                                 command.comprobanteId(),
                                 true,
@@ -253,8 +255,36 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
                     1
             )));
         } catch (Exception e) {
+            // El proveedor NO esta disponible: el rechazo es TRANSITORIO. La
+            // anulacion se reprograma, en lugar de devolverse al cliente como
+            // un rechazo definitivo: el comprobante sigue sin anular, y el
+            // taller tiene que poder reintentarlo.
             log.warn("Error al anular comprobante en APISUNAT ({}): {}", comprobanteId, e.getMessage());
-            resultado = ResultadoDeclaracion.rechazado("500", "Fallo al comunicar anulación con APISUNAT: " + e.getMessage());
+
+            unitOfWork.runInTransaction(() -> {
+                int numeroDeIntento = 1 + attemptRepositoryPort.countAttempts(
+                        tenantId, ProviderType.APISUNAT, "VOID_VOUCHER", comprobanteId);
+
+                attemptRepositoryPort.save(IntegrationAttempt.retry(
+                        tenantId,
+                        ProviderType.APISUNAT,
+                        "VOID_VOUCHER",
+                        comprobanteId,
+                        numeroDeIntento,
+                        e.getMessage()));
+
+                retryQueueRepositoryPort.save(RetryTask.create(
+                        tenantId,
+                        ProviderType.APISUNAT,
+                        "VOID_VOUCHER",
+                        comprobanteId,
+                        "{\"tipo\":\"" + tipo + "\",\"serie\":\"" + serie + "\",\"numero\":" + numero
+                                + ",\"motivo\":\"" + (motivo != null ? motivo : "") + "\"}",
+                        5));
+            });
+
+            resultado = ResultadoDeclaracion.pendiente(
+                    "El servicio tributario no esta disponible: la anulacion se ha reprogramado");
         }
 
         return new ComprobanteResult(

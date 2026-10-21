@@ -27,10 +27,10 @@
 
 ## 5. erp-integration-hub — Los estados del comprobante y la anulación
 
-- [ ] 5.1 Sustituir el texto libre del estado del comprobante por un conjunto explícito en `domain/model`, que incluya `OBSERVADO` como estado distinguible de `RECHAZADO`, y mapear el estado real que informa el proveedor a ese conjunto en `ApiSunatElectronicInvoicingAdapter`. Verificar con un test que una respuesta del proveedor en estado de observación se traduce al estado de observación y **no** a rechazo definitivo.
-- [ ] 5.2 Conservar el código de respuesta que el proveedor informó, en lugar de sustituirlo por un literal, en `ResultadoDeclaracion` y en la respuesta de la API. Verificar con un test que el código real del proveedor aparece en la respuesta.
-- [ ] 5.3 Corregir el procedimiento de anulación en `ApiSunatElectronicInvoicingAdapter.anularComprobante` para que obtenga el ticket de comunicación que el proveedor exige y lo referencie en la solicitud. Verificar con un test, sobre el adapter simulado, que la anulación incluye la referencia al ticket obtenido.
-- [ ] 5.4 Reprogramar en la cola de reintentos una anulación rechazada de forma transitoria, en lugar de devolverla como rechazo definitivo, y verificar que una anulación rechazada de forma definitiva sí se devuelve al cliente. Verificar con un test que cubre ambos casos.
+- [x] 5.1 Sustituir el texto libre del estado del comprobante por un conjunto explícito en `domain/model`, que incluya `OBSERVADO` como estado distinguible de `RECHAZADO`, y mapear el estado real que informa el proveedor a ese conjunto en `ApiSunatElectronicInvoicingAdapter`. Verificar con un test que una respuesta del proveedor en estado de observación se traduce al estado de observación y **no** a rechazo definitivo.
+- [x] 5.2 Conservar el código de respuesta que el proveedor informó, en lugar de sustituirlo por un literal, en `ResultadoDeclaracion` y en la respuesta de la API. Verificar con un test que el código real del proveedor aparece en la respuesta.
+- [x] 5.3 Corregir el procedimiento de anulación en `ApiSunatElectronicInvoicingAdapter.anularComprobante` para que obtenga el ticket de comunicación que el proveedor exige y lo referencie en la solicitud. Verificar con un test, sobre el adapter simulado, que la anulación incluye la referencia al ticket obtenido.
+- [x] 5.4 Reprogramar en la cola de reintentos una anulación rechazada de forma transitoria, en lugar de devolverla como rechazo definitivo, y verificar que una anulación rechazada de forma definitiva sí se devuelve al cliente. Verificar con un test que cubre ambos casos.
 
 ## 6. erp-integration-hub — Numeración, reintentos y cola de muertos
 

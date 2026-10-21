@@ -53,7 +53,10 @@ spring:
 erp:
   security:
     internal-service-key: ${INTERNAL_SERVICE_KEY:}
-    jwks-url: ${JWKS_URL:http://localhost:8081/.well-known/jwks.json}
+    # La URL del conjunto de claves debe usar un esquema cifrado. El arranque
+    # falla de forma explicita si no lo hace, y la unica excepcion es el
+    # perfil de desarrollo local (application-dev.yml).
+    jwks-url: ${JWKS_URL:https://auth.erp-automotriz.com/.well-known/jwks.json}
   security:
     platform-role:
       # Rol con BYPASSRLS, usado EXCLUSIVAMENTE por el relay de reintentos

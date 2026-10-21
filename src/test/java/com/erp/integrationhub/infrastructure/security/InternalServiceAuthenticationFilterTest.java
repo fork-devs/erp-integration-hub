@@ -40,7 +40,10 @@ class InternalServiceAuthenticationFilterTest {
         kpg.initialize(2048);
         this.keyPair = kpg.generateKeyPair();
 
-        this.jwksKeyManager = new JwksKeyManager("http://localhost:8081/.well-known/jwks.json");
+        // El perfil de desarrollo local es el unico que permite la URL en
+        // claro; el resto de las comprobaciones las hace el propio cliente.
+        this.jwksKeyManager = new JwksKeyManager(
+                "http://localhost:8081/.well-known/jwks.json", List.of("dev"));
         this.jwksKeyManager.registerManualKey(keyId, (RSAPublicKey) keyPair.getPublic());
 
         this.filter = new InternalServiceAuthenticationFilter(internalKey, jwksKeyManager);

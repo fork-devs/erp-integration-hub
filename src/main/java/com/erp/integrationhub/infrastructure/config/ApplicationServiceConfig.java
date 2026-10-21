@@ -15,6 +15,7 @@ import com.erp.integrationhub.domain.port.ValidadorIdentidadPort;
 import com.erp.integrationhub.domain.port.ValidadorVehicularPort;
 import com.erp.integrationhub.domain.port.IdentityCachePort;
 import com.erp.integrationhub.infrastructure.adapter.cache.RedisIdentityCacheAdapter;
+import com.erp.integrationhub.infrastructure.security.JwksKeyManager;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.erp.integrationhub.infrastructure.adapter.external.ApiSunatElectronicInvoicingAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.ChequeaPeRucValidationAdapter;
@@ -64,6 +65,15 @@ public class ApplicationServiceConfig {
 
     @Value("${erp.integration.apiperu.sandbox-mode:true}")
     private boolean apiperuSandboxMode;
+
+    @Bean
+    public JwksKeyManager jwksKeyManager(
+            @Value("${erp.security.jwks-url:https://auth.erp-automotriz.com/.well-known/jwks.json}") String jwksUrl,
+            org.springframework.core.env.Environment environment) {
+        return new JwksKeyManager(
+                jwksUrl,
+                java.util.Arrays.asList(environment.getActiveProfiles()));
+    }
 
     @Bean
     public EmisorTributarioPort emisorTributarioPort() {

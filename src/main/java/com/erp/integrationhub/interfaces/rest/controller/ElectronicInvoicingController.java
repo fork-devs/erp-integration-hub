@@ -8,6 +8,8 @@ import com.erp.integrationhub.interfaces.rest.request.AnularComprobanteRequest;
 import com.erp.integrationhub.interfaces.rest.request.ConsultarEstadoComprobanteRequest;
 import com.erp.integrationhub.interfaces.rest.request.EmitirComprobanteRequest;
 import com.erp.integrationhub.interfaces.rest.response.ComprobanteResponse;
+import com.erp.integrationhub.interfaces.rest.support.AuthenticatedUserHolder;
+import com.erp.integrationhub.interfaces.rest.support.TenantResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -36,9 +38,11 @@ public class ElectronicInvoicingController {
     @PostMapping("/emit")
     @Operation(summary = "Emit electronic invoice/boleta to SUNAT via APISUNAT", description = "Submits invoice to SUNAT with deterministic idempotency guarantee and automatic outbox retry on failure")
     public ResponseEntity<ComprobanteResponse> emitInvoice(
-            @RequestHeader("X-Tenant-ID") UUID tenantId,
+            @RequestHeader(value = "X-Tenant-ID", required = false) UUID requestedTenantId,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyHeader,
             @Valid @RequestBody EmitirComprobanteRequest request) {
+
+        UUID tenantId = TenantResolver.resolveForOperation(requestedTenantId, AuthenticatedUserHolder.current());
 
         String effectiveIdempotencyKey;
         if (idempotencyHeader != null && !idempotencyHeader.isBlank()) {

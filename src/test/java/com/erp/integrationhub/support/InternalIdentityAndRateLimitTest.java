@@ -38,7 +38,7 @@ class InternalIdentityAndRateLimitTest {
                 "ASESOR");
 
         InternalServiceAuthenticationFilter filtro = new InternalServiceAuthenticationFilter(
-                CLAVE, jwksKeyManager(), entorno);
+                CLAVE, java.util.Map.of(), true, jwksKeyManager(), entorno);
 
         var admin = principalDe(filtro, "erp-billing-service");
         assertTrue(admin.roles().contains("ROLE_ADMIN"),
@@ -58,7 +58,7 @@ class InternalIdentityAndRateLimitTest {
         MockEnvironment entorno = new MockEnvironment();
 
         InternalServiceAuthenticationFilter filtro = new InternalServiceAuthenticationFilter(
-                CLAVE, jwksKeyManager(), entorno);
+                CLAVE, java.util.Map.of(), true, jwksKeyManager(), entorno);
 
         var principal = principalDe(filtro, "erp-servicio-desconocido");
 

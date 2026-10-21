@@ -4,6 +4,7 @@
 - **Fecha:** 2026-10-21
 - **Change:** `fix-provider-integration`
 - **Ámbito:** `erp-integration-hub` y, en el futuro, `billing-service`
+- **Copia canónica:** `erp-integration-hub/docs/adr/ADR-002-numeracion-y-anulacion-de-comprobantes.md` (este repositorio; los demás guardan un espejo)
 
 ## Contexto
 

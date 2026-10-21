@@ -3,10 +3,15 @@
 > La documentación vive en la **raíz del workspace**, que no es un repositorio
 > Git: `docs/` no está versionado. Este archivo deja constancia de lo
 > actualizado, para que el cambio sea trazable desde el repositorio.
+>
+> Los ADR son la excepción: su **copia canónica** vive en el repositorio del
+> servicio que decide (ADR-001 en `erp-auth-service`, ADR-002 en
+> `erp-integration-hub`), y los demás repositorios guardan un espejo con el
+> puntero a ella.
 
 ## Task 9.4 — El ADR de la numeración y la anulación
 
-**Fichero:** `docs/adr/ADR-002-numeracion-y-anulacion-de-comprobantes.md`
+**Fichero:** `docs/adr/ADR-002-numeracion-y-anulacion-de-comprobantes.md` — **copia canónica** en este repositorio (`erp-integration-hub/docs/adr/ADR-002-numeracion-y-anulacion-de-comprobantes.md`).
 
 El registro sigue la convención del proyecto (escenario, decisión, motivo,
 alternativas descartadas y consecuencias) y contiene:

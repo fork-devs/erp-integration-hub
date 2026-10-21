@@ -161,6 +161,10 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
                     if (tenantClaim != null) tenantId = UUID.fromString(tenantClaim);
                 } catch (IllegalArgumentException ignored) {}
 
+                // El claim de roles es un ARRAY, con el mismo contrato que
+                // usa el gateway. Un token sin roles NO recibe un rol por
+                // defecto: conceder un privilegio que el token no declara
+                // es un bypass de autorizacion.
                 Set<String> roles = new HashSet<>();
                 Object rolesObj = claims.getClaim("roles");
                 if (rolesObj instanceof List<?> list) {
@@ -170,11 +174,12 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
                             roles.add(roleStr.startsWith("ROLE_") ? roleStr : "ROLE_" + roleStr);
                         }
                     }
-                } else if (claims.getStringClaim("role") != null) {
-                    String singleRole = claims.getStringClaim("role");
-                    roles.add(singleRole.startsWith("ROLE_") ? singleRole : "ROLE_" + singleRole);
-                } else {
-                    roles.add("ROLE_USER");
+                }
+
+                if (roles.isEmpty()) {
+                    sendErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED,
+                            "El token no declara ningun rol");
+                    return;
                 }
 
                 authenticatedUser = new AuthenticatedUser(userId, tenantId, sub, roles, false);

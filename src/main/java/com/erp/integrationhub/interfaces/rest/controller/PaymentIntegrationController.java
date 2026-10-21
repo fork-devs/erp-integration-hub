@@ -6,6 +6,7 @@ import com.erp.integrationhub.application.usecase.ProcesarPagoUseCase;
 import com.erp.integrationhub.interfaces.rest.request.ProcesarPagoRequest;
 import com.erp.integrationhub.interfaces.rest.response.PagoResponse;
 import com.erp.integrationhub.interfaces.rest.support.AuthenticatedUserHolder;
+import com.erp.integrationhub.interfaces.rest.support.TenantContextScope;
 import com.erp.integrationhub.interfaces.rest.support.TenantResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -72,7 +73,19 @@ public class PaymentIntegrationController {
                 effectiveIdempotencyKey
         );
 
-        PagoResult result = procesarPagoUseCase.procesarPago(command);
+        PagoResult result = enContextoDeTaller(tenantId, () -> procesarPagoUseCase.procesarPago(command));
         return ResponseEntity.ok(PagoResponse.fromResult(result));
     }
+
+    /**
+     * Ejecuta la operacion con el contexto de taller establecido, de modo que
+     * la politica de Row-Level Security filtre por el taller del principal y
+     * no por el de la fila.
+     */
+    private <T> T enContextoDeTaller(UUID tenantId, java.util.function.Supplier<T> operacion) {
+        try (TenantContextScope scope = TenantContextScope.forTenant(tenantId)) {
+            return operacion.get();
+        }
+    }
+
 }

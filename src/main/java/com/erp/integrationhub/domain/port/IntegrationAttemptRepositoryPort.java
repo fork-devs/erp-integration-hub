@@ -10,5 +10,5 @@ public interface IntegrationAttemptRepositoryPort {
     IntegrationAttempt save(IntegrationAttempt attempt);
     List<IntegrationAttempt> findByTenantId(UUID tenantId, int limit);
     List<IntegrationAttempt> findByTenantIdAndReferenceId(UUID tenantId, UUID referenceId);
-    List<IntegrationAttempt> findByStatus(AttemptStatus status, int limit);
+    List<IntegrationAttempt> findByTenantIdAndStatus(UUID tenantId, AttemptStatus status, int limit);
 }

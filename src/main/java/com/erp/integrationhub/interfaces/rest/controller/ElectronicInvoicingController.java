@@ -9,6 +9,7 @@ import com.erp.integrationhub.interfaces.rest.request.ConsultarEstadoComprobante
 import com.erp.integrationhub.interfaces.rest.request.EmitirComprobanteRequest;
 import com.erp.integrationhub.interfaces.rest.response.ComprobanteResponse;
 import com.erp.integrationhub.interfaces.rest.support.AuthenticatedUserHolder;
+import com.erp.integrationhub.interfaces.rest.support.TenantContextScope;
 import com.erp.integrationhub.interfaces.rest.support.TenantResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -95,7 +96,7 @@ public class ElectronicInvoicingController {
                 effectiveIdempotencyKey
         );
 
-        ComprobanteResult result = emitirComprobanteUseCase.emitirComprobante(command);
+        ComprobanteResult result = enContextoDeTaller(tenantId, () -> emitirComprobanteUseCase.emitirComprobante(command));
         return ResponseEntity.ok(ComprobanteResponse.fromResult(result));
     }
 
@@ -109,34 +110,48 @@ public class ElectronicInvoicingController {
                 ? request.comprobanteId()
                 : UUID.nameUUIDFromBytes(("void:" + tenantId + ":" + request.tipo() + ":" + request.serie() + ":" + request.numero()).getBytes(StandardCharsets.UTF_8));
 
-        ComprobanteResult result = emitirComprobanteUseCase.anularComprobante(
+        ComprobanteResult result = enContextoDeTaller(tenantId, () -> emitirComprobanteUseCase.anularComprobante(
                 tenantId,
                 compId,
                 request.tipo(),
                 request.serie(),
                 request.numero(),
                 request.motivo()
-        );
+        ));
         return ResponseEntity.ok(ComprobanteResponse.fromResult(result));
     }
 
     @PostMapping("/status")
     @Operation(summary = "Query document status in SUNAT via APISUNAT", description = "Retrieves current status, hash, XML, CDR, and PDF links (/api/v3/status)")
     public ResponseEntity<ComprobanteResponse> checkStatus(
-            @RequestHeader("X-Tenant-ID") UUID tenantId,
+            @RequestHeader(value = "X-Tenant-ID", required = false) UUID requestedTenantId,
             @Valid @RequestBody ConsultarEstadoComprobanteRequest request) {
+
+        UUID tenantId = TenantResolver.resolveForOperation(requestedTenantId, AuthenticatedUserHolder.current());
 
         UUID compId = request.comprobanteId() != null
                 ? request.comprobanteId()
                 : UUID.nameUUIDFromBytes(("status:" + tenantId + ":" + request.tipo() + ":" + request.serie() + ":" + request.numero()).getBytes(StandardCharsets.UTF_8));
 
-        ComprobanteResult result = emitirComprobanteUseCase.consultarEstadoComprobante(
+        ComprobanteResult result = enContextoDeTaller(tenantId, () -> emitirComprobanteUseCase.consultarEstadoComprobante(
                 tenantId,
                 compId,
                 request.tipo(),
                 request.serie(),
                 request.numero()
-        );
+        ));
         return ResponseEntity.ok(ComprobanteResponse.fromResult(result));
     }
+
+    /**
+     * Ejecuta la operacion con el contexto de taller establecido, de modo que
+     * la politica de Row-Level Security filtre por el taller del principal y
+     * no por el de la fila.
+     */
+    private <T> T enContextoDeTaller(UUID tenantId, java.util.function.Supplier<T> operacion) {
+        try (TenantContextScope scope = TenantContextScope.forTenant(tenantId)) {
+            return operacion.get();
+        }
+    }
+
 }

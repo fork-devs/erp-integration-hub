@@ -5,6 +5,7 @@ import com.erp.integrationhub.domain.model.ProviderType;
 import com.erp.integrationhub.domain.port.ProviderConfigRepositoryPort;
 import com.erp.integrationhub.infrastructure.persistence.entity.ProviderConfigJpaEntity;
 import com.erp.integrationhub.infrastructure.persistence.repository.SpringDataProviderConfigRepository;
+import com.erp.integrationhub.infrastructure.persistence.TransactionGuard;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -14,10 +15,13 @@ import java.util.stream.Collectors;
 @Component
 public class ProviderConfigPersistenceAdapter implements ProviderConfigRepositoryPort {
 
+    private final TransactionGuard transactionGuard;
     private final SpringDataProviderConfigRepository repository;
 
-    public ProviderConfigPersistenceAdapter(SpringDataProviderConfigRepository repository) {
+    public ProviderConfigPersistenceAdapter(SpringDataProviderConfigRepository repository,
+                                           TransactionGuard transactionGuard) {
         this.repository = repository;
+        this.transactionGuard = transactionGuard;
     }
 
     @Override
@@ -32,6 +36,7 @@ public class ProviderConfigPersistenceAdapter implements ProviderConfigRepositor
 
     @Override
     public ProviderConfig save(ProviderConfig config) {
+        transactionGuard.requireActiveTransaction("saveProviderConfig");
         ProviderConfigJpaEntity entity = toEntity(config);
         ProviderConfigJpaEntity saved = repository.save(entity);
         return toDomain(saved);

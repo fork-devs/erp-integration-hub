@@ -7,11 +7,13 @@ import com.erp.integrationhub.infrastructure.persistence.entity.RetryTaskJpaEnti
 import com.erp.integrationhub.infrastructure.persistence.rls.PlatformScopeQueryExecutor;
 import com.erp.integrationhub.infrastructure.persistence.repository.SpringDataRetryTaskRepository;
 import org.springframework.data.domain.PageRequest;
+import com.erp.integrationhub.infrastructure.persistence.TransactionGuard;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.sql.Timestamp;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -21,18 +23,21 @@ import java.util.stream.Collectors;
 @Component
 public class RetryQueuePersistenceAdapter implements RetryQueueRepositoryPort {
 
+    private final TransactionGuard transactionGuard;
     private final SpringDataRetryTaskRepository repository;
     private final PlatformScopeQueryExecutor platformScopeQueryExecutor;
 
     public RetryQueuePersistenceAdapter(SpringDataRetryTaskRepository repository,
-                                        PlatformScopeQueryExecutor platformScopeQueryExecutor) {
+                                        PlatformScopeQueryExecutor platformScopeQueryExecutor,
+                                        TransactionGuard transactionGuard) {
         this.repository = repository;
         this.platformScopeQueryExecutor = platformScopeQueryExecutor;
+        this.transactionGuard = transactionGuard;
     }
 
     @Override
-    @Transactional
     public RetryTask save(RetryTask task) {
+        transactionGuard.requireActiveTransaction("saveRetryTask");
         RetryTaskJpaEntity entity = toEntity(task);
         RetryTaskJpaEntity saved = repository.save(entity);
         return toDomain(saved);
@@ -82,12 +87,41 @@ public class RetryQueuePersistenceAdapter implements RetryQueueRepositoryPort {
                 (String) row.get("payload"),
                 ((Number) row.get("attempts_count")).intValue(),
                 ((Number) row.get("max_attempts")).intValue(),
-                (Instant) row.get("next_retry_at"),
+                toInstant(row.get("next_retry_at")),
                 (String) row.get("status"),
                 (String) row.get("last_error"),
-                (Instant) row.get("created_at"),
-                (Instant) row.get("updated_at")
+                toInstant(row.get("created_at")),
+                toInstant(row.get("updated_at"))
         );
+    }
+
+    /**
+     * Convierte el valor temporal de una fila nativa.
+     *
+     * <p>El driver de PostgreSQL devuelve las marcas de tiempo como
+     * {@code java.sql.Timestamp}, no como {@code Instant}. Un casteo directo
+     * fallaba con {@code ClassCastException} en la primera lectura del relay,
+     * de modo que la cola de reintentos nunca llegaba a procesar nada: el
+     * fallo se manifestaba como una excepcion de tipos, muy lejos de su
+     * causa.
+     */
+    private Instant toInstant(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Instant instant) {
+            return instant;
+        }
+        if (value instanceof Timestamp timestamp) {
+            return timestamp.toInstant();
+        }
+        if (value instanceof OffsetDateTime offsetDateTime) {
+            return offsetDateTime.toInstant();
+        }
+        if (value instanceof java.time.LocalDateTime localDateTime) {
+            return localDateTime.toInstant(java.time.ZoneOffset.UTC);
+        }
+        throw new IllegalArgumentException("Valor temporal inesperado en la fila nativa: " + value.getClass());
     }
 
     private RetryTask toDomain(RetryTaskJpaEntity entity) {

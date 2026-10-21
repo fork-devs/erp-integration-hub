@@ -12,6 +12,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -33,6 +34,12 @@ public class PaymentIntegrationController {
     }
 
     @PostMapping("/charge")
+    /**
+     * Un cobro mueve dinero: solo lo ejecutan los roles de administracion y
+     * los servicios internos. Antes, el endpoint exigia autenticacion, y eso
+     * bastaba para que cualquier principalAuthenticated lo ejecutara.
+     */
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'ADMIN_TALLER', 'SUPERADMIN', 'INTERNAL_SERVICE')")
     @Operation(summary = "Process a credit/debit card payment via Stripe", description = "Executes charge with Stripe token and deterministic idempotency lock")
     public ResponseEntity<PagoResponse> processCharge(
             @RequestHeader(value = "X-Tenant-ID", required = false) UUID requestedTenantId,

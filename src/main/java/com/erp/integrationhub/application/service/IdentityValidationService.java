@@ -109,10 +109,15 @@ public class IdentityValidationService implements ConsultarRucUseCase, Consultar
                 ? UUID.nameUUIDFromBytes(referenceKey.getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 : UUID.randomUUID();
 
-        unitOfWork.runInTransaction(() -> attemptRepositoryPort.save(error == null
-                ? IntegrationAttempt.ok(effectiveTenant, provider, op, referenceId, 1)
-                : IntegrationAttempt.retry(effectiveTenant, provider, op, referenceId, 1, error)
-        ));
+        unitOfWork.runInTransaction(() -> {
+            // El numero de intento es la progresion real, no una constante.
+            int numeroDeIntento = 1 + attemptRepositoryPort.countAttempts(
+                    effectiveTenant, provider, op, referenceId);
+            attemptRepositoryPort.save(error == null
+                    ? IntegrationAttempt.ok(effectiveTenant, provider, op, referenceId, numeroDeIntento)
+                    : IntegrationAttempt.retry(effectiveTenant, provider, op, referenceId, numeroDeIntento, error)
+            );
+        });
     }
 
     private RucResult toRucResult(ConsultaRucResult r, boolean fromCache) {

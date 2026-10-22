@@ -51,24 +51,6 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
                 comprobante.getClienteDenominacion(), comprobante.getClienteNumDoc());
 
         // Modo sandbox si la credencial es de prueba o mock
-        if (sandboxMode && (token.contains("mock") || token.contains("sandbox") || token.isBlank())) {
-            String hash = "4HY34uR7a+Vc1Ax3/zrUk1Ng+tjTLwlqa9mRFysy15E=";
-            String cleanDoc = comprobante.getClienteNumDoc() != null ? comprobante.getClienteNumDoc() : "20123456789";
-            String code = comprobante.getTipo().name().startsWith("F") ? "01" : "03";
-            String cdrUrl = String.format("https://apisunat.pe/R-%s-%s-%s-%d.xml", cleanDoc, code, comprobante.getSerie(), comprobante.getNumero());
-            String xmlUrl = String.format("https://apisunat.pe/%s-%s-%s-%d.xml", cleanDoc, code, comprobante.getSerie(), comprobante.getNumero());
-            String pdfUrl = String.format("https://apisunat.pe/pdf/a4/%s-%s-%s-%d", cleanDoc, code, comprobante.getSerie(), comprobante.getNumero());
-
-            return ResultadoDeclaracion.aceptado(
-                    "0",
-                    "El comprobante fue enviado y aceptado por SUNAT.",
-                    pdfUrl,
-                    xmlUrl,
-                    cdrUrl,
-                    hash
-            );
-        }
-
         // Llamada HTTP Real al API v3 de APISUNAT
         try {
             String targetUrl = baseUrl.endsWith("/") ? baseUrl + "api/v3/documents" : baseUrl + "/api/v3/documents";
@@ -103,10 +85,6 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
     public ResultadoDeclaracion anularComprobante(String tipo, String serie, int numero, String motivo) {
         log.info("[APISUNAT ACL] Solicitando anulación/baja de {} {}-{} por motivo: {}", tipo, serie, numero, motivo);
 
-        if (sandboxMode && (token.contains("mock") || token.contains("sandbox") || token.isBlank())) {
-            return ResultadoDeclaracion.anulado("0", "El comprobante fue dado de baja exitosamente en SUNAT.", "BAJA-" + UUID.randomUUID().toString().substring(0, 8));
-        }
-
         try {
             boolean isBoleta = tipo != null && tipo.toLowerCase().contains("boleta");
             String endpoint = isBoleta ? "api/v3/daily-summary" : "api/v3/voided";
@@ -121,6 +99,19 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
             if (isBoleta) {
                 root.put("accion", "anulacion");
             }
+
+            // La anulacion EXIGE el ticket de comunicacion del comprobante:
+            // sin el, la autoridad fiscal no sabe que documento se esta
+            // anulando, y rechaza la solicitud. El ticket se obtiene del
+            // endpoint de consulta y se referencia en la peticion.
+            String ticket = obtenerTicketDeComunicacion(docTipo, serie, numero);
+            if (ticket == null || ticket.isBlank()) {
+                log.warn("[APISUNAT ACL] No se pudo obtener el ticket de comunicación de {}-{}-{}: "
+                        + "la anulación no puede continuar", docTipo, serie, numero);
+                return ResultadoDeclaracion.rechazado("TICKET_NO_ENCONTRADO",
+                        "No se encontró el ticket de comunicación del comprobante " + serie + "-" + numero);
+            }
+            root.put("ticket", ticket);
 
             String requestJson = objectMapper.writeValueAsString(root);
 
@@ -151,12 +142,54 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
         }
     }
 
+    /**
+     * Obtiene el ticket de comunicacion de un comprobante.
+     *
+     * <p>La autoridad fiscal exige ese ticket en la solicitud de anulacion:
+     * es lo que acredita que el documento existe y ha sido emitido. Sin el,
+     * la solicitud se rechaza por un motivo que no dice nada del problema
+     * real.
+     */
+    private String obtenerTicketDeComunicacion(String docTipo, String serie, int numero) {
+        try {
+            String targetUrl = baseUrl.endsWith("/")
+                    ? baseUrl + "api/v3/tickets"
+                    : baseUrl + "/api/v3/tickets";
+            String consulta = "?documento=" + java.net.URLEncoder.encode(docTipo, java.nio.charset.StandardCharsets.UTF_8)
+                    + "&serie=" + java.net.URLEncoder.encode(serie, java.nio.charset.StandardCharsets.UTF_8)
+                    + "&numero=" + numero;
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(targetUrl + consulta))
+                    .timeout(Duration.ofSeconds(15))
+                    .header("Authorization", "Bearer " + token)
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200 && response.statusCode() != 201) {
+                log.warn("[APISUNAT ACL] El endpoint de tickets respondió HTTP {}: {}", response.statusCode(), response.body());
+                return null;
+            }
+
+            JsonNode root = objectMapper.readTree(response.body());
+            JsonNode payload = root.path("payload");
+            String ticket = payload.hasNonNull("ticket")
+                    ? payload.get("ticket").asText()
+                    : root.path("ticket").asText(root.path("hash").asText(null));
+
+            if (ticket == null || ticket.isBlank()) {
+                log.warn("[APISUNAT ACL] La respuesta de tickets no trae ticket: {}", response.body());
+            }
+            return ticket;
+        } catch (Exception e) {
+            log.warn("[APISUNAT ACL] No se pudo obtener el ticket de comunicación: {}", e.getMessage());
+            return null;
+        }
+    }
+
     @Override
     public ResultadoDeclaracion consultarEstadoComprobante(String tipo, String serie, int numero) {
-        if (sandboxMode && (token.contains("mock") || token.contains("sandbox") || token.isBlank())) {
-            return ResultadoDeclaracion.aceptado("0", "El comprobante fue enviado y aceptado por SUNAT.", null, null, null, null);
-        }
-
         try {
             String targetUrl = baseUrl.endsWith("/") ? baseUrl + "api/v3/status" : baseUrl + "/api/v3/status";
             String docTipo = tipo != null ? tipo.toLowerCase() : "factura";
@@ -264,13 +297,20 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
                 pdf = root.path("pdf").asText(null);
             }
 
-            if ("ACEPTADO".equalsIgnoreCase(estado)) {
-                return ResultadoDeclaracion.aceptado("0", message, pdf, xml, cdr, hash);
-            } else if ("PENDIENTE".equalsIgnoreCase(estado)) {
-                return ResultadoDeclaracion.pendiente(message);
-            } else {
-                return ResultadoDeclaracion.rechazado("400", message);
-            }
+            // El codigo de respuesta es el que INFORMO el proveedor: antes
+            // se sustituia por un literal, de modo que el diagnostico que
+            // llegaba al taller no era el de SUNAT.
+            String codigo = payloadNode.hasNonNull("codigoRespuesta")
+                    ? payloadNode.get("codigoRespuesta").asText()
+                    : root.path("codigoRespuesta").asText(root.path("codigo").asText("0"));
+
+            // El estado se traduce al conjunto explicito. OBSERVADO es un
+            // estado DISTINTO de RECHAZADO: un comprobante observado ha sido
+            // aceptado con una observacion, y no se puede volver a emitir.
+            com.erp.integrationhub.domain.model.EstadoComprobante estadoReal =
+                    com.erp.integrationhub.domain.model.EstadoComprobante.desdeProveedor(estado);
+
+            return ResultadoDeclaracion.conEstado(estadoReal, codigo, message, pdf, xml, cdr, hash);
         } catch (Exception e) {
             log.warn("[APISUNAT ACL] Error al parsear respuesta JSON de APISUNAT: {}", e.getMessage());
             return ResultadoDeclaracion.rechazado("500", "Respuesta no estructurada de APISUNAT: " + json);

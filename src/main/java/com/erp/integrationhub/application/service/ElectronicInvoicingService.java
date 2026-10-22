@@ -5,7 +5,9 @@ import com.erp.integrationhub.application.dto.command.ItemComprobanteCommand;
 import com.erp.integrationhub.application.dto.result.ComprobanteResult;
 import com.erp.integrationhub.application.usecase.EmitirComprobanteUseCase;
 import com.erp.integrationhub.domain.model.ComprobanteParaDeclarar;
+import com.erp.integrationhub.domain.model.EstadoComprobante;
 import com.erp.integrationhub.domain.model.ComprobanteTipo;
+import com.erp.integrationhub.domain.exception.IdempotencyConflictException;
 import com.erp.integrationhub.domain.model.IdempotencyRecord;
 import com.erp.integrationhub.domain.model.IdempotencyScope;
 import com.erp.integrationhub.domain.model.IntegrationAttempt;
@@ -13,12 +15,14 @@ import com.erp.integrationhub.domain.model.ItemComprobante;
 import com.erp.integrationhub.domain.model.Moneda;
 import com.erp.integrationhub.domain.model.ProviderType;
 import com.erp.integrationhub.domain.model.ResultadoDeclaracion;
+import com.erp.integrationhub.domain.util.PayloadFingerprint;
 import com.erp.integrationhub.domain.model.RetryTask;
 import com.erp.integrationhub.domain.port.EmisorTributarioPort;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
 import com.erp.integrationhub.domain.port.UnitOfWork;
+import com.erp.integrationhub.domain.port.VoucherNumberingPort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +34,12 @@ import java.util.stream.Collectors;
 
 public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
 
+    /**
+     * Numero maximo de intentos de una operacion encolada. Con la escala de
+     * esperas por defecto, siete intentos cubren una ventana de unas 24 horas.
+     */
+    public static final int MAX_INTENTOS_REINTENTO = 7;
+
     private static final Logger log = LoggerFactory.getLogger(ElectronicInvoicingService.class);
 
     private final EmisorTributarioPort emisorTributarioPort;
@@ -38,19 +48,22 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
     private final RetryQueueRepositoryPort retryQueueRepositoryPort;
     private final ObjectMapper objectMapper;
     private final UnitOfWork unitOfWork;
+    private final VoucherNumberingPort voucherNumberingPort;
 
     public ElectronicInvoicingService(
             EmisorTributarioPort emisorTributarioPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             RetryQueueRepositoryPort retryQueueRepositoryPort,
-            UnitOfWork unitOfWork) {
+            UnitOfWork unitOfWork,
+            VoucherNumberingPort voucherNumberingPort) {
         this.emisorTributarioPort = emisorTributarioPort;
         this.idempotencyRepositoryPort = idempotencyRepositoryPort;
         this.attemptRepositoryPort = attemptRepositoryPort;
         this.retryQueueRepositoryPort = retryQueueRepositoryPort;
         this.objectMapper = new ObjectMapper().findAndRegisterModules();
         this.unitOfWork = unitOfWork;
+        this.voucherNumberingPort = voucherNumberingPort;
     }
 
     @Override
@@ -59,22 +72,36 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
             throw new IllegalArgumentException("tenantId y comprobanteId son obligatorios");
         }
 
-        // 1. Verificación de Idempotencia
+        // 1. Huella de la carga util: distingue el reintento del mismo
+        // comprobante de otra emision con la misma clave.
         String idempotencyKey = command.idempotencyKey() != null ? command.idempotencyKey().trim() : command.comprobanteId().toString();
+        String huella = PayloadFingerprint.of(cargaUtilDe(command));
+
+        // 2. Estado de la clave de idempotencia.
         Optional<IdempotencyRecord> existingRecord = idempotencyRepositoryPort.findByTenantAndScopeAndKey(
                 command.tenantId(), IdempotencyScope.VOUCHER, idempotencyKey
         );
 
         if (existingRecord.isPresent()) {
-            ComprobanteResult cachedResult = deserializeResult(command.comprobanteId(), existingRecord.get().getResponsePayload(), true);
+            IdempotencyRecord registroExistente = existingRecord.get();
+
+            if (!registroExistente.mismaPeticion(huella)
+                    && registroExistente.getState().resultadoDefinitivo()) {
+                // La misma clave con otra carga util NO es la misma peticion.
+                throw new IdempotencyConflictException(
+                        "La clave de idempotencia ya se uso para una peticion distinta");
+            }
+
+            ComprobanteResult cachedResult = deserializeResult(command.comprobanteId(), registroExistente.getResponsePayload(), true);
             
             // Si el comprobante estaba en estado PENDIENTE_SUNAT, verificar si ya fue procesado en SUNAT
-            if ("PENDIENTE_SUNAT".equalsIgnoreCase(cachedResult.estadoSunat()) || "PENDIENTE".equalsIgnoreCase(cachedResult.estadoSunat())) {
+            if (EstadoComprobante.PENDIENTE.name().equalsIgnoreCase(cachedResult.estadoSunat())
+                    || EstadoComprobante.PENDIENTE_SUNAT_ALIAS.equalsIgnoreCase(cachedResult.estadoSunat())) {
                 try {
                     ResultadoDeclaracion statusCheck = emisorTributarioPort.consultarEstadoComprobante(
                             command.tipo(), command.serie(), command.numero()
                     );
-                    if (statusCheck.exitoso() && "ACEPTADO".equalsIgnoreCase(statusCheck.estadoSunat())) {
+                    if (statusCheck.exitoso() && statusCheck.estado().emitido()) {
                         ComprobanteResult updatedResult = new ComprobanteResult(
                                 command.comprobanteId(),
                                 true,
@@ -87,12 +114,14 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
                                 statusCheck.hashCdr(),
                                 false
                         );
-                        unitOfWork.runInTransaction(() -> idempotencyRepositoryPort.save(IdempotencyRecord.of(
+                        // La actualizacion va por la clave de negocio: el
+                        // resultado llega a la fila que ya existe, y no se
+                        // inserta una nueva.
+                        unitOfWork.runInTransaction(() -> idempotencyRepositoryPort.updateByKey(
                                 command.tenantId(),
                                 IdempotencyScope.VOUCHER,
                                 idempotencyKey,
-                                serializeResult(updatedResult)
-                        )));
+                                registroExistente.completed(serializeResult(updatedResult), null)));
                         return updatedResult;
                     }
                 } catch (Exception ignored) {}
@@ -129,6 +158,13 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
                 command.fechaEmision()
         );
 
+        // 2 bis. Reservar la numeracion ANTES de contactar al proveedor. La
+        // numeracion es la identidad fiscal del comprobante: si dos emisiones
+        // simultaneas comparten serie y numero, la autoridad fiscal ve un
+        // duplicado. Comprobarlo despues del contacto seria tarde.
+        unitOfWork.runInTransaction(() -> voucherNumberingPort.reserve(
+                command.tenantId(), command.serie(), command.numero(), command.comprobanteId()));
+
         // 3. Emisión hacia PSE / SUNAT con tolerancia a fallos.
         //
         // La llamada al proveedor no ocurre dentro del limite transaccional:
@@ -148,12 +184,18 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
             // cobro perdido, y una tarea de reintento sin su intento es un
             // reenvio sin trazabilidad.
             unitOfWork.runInTransaction(() -> {
+                // El numero de intento es la PROGRESION real: la bitacora
+                // dice cuantas veces se ha intentado, y no siempre "a la
+                // primera".
+                int numeroDeIntento = 1 + attemptRepositoryPort.countAttempts(
+                        command.tenantId(), ProviderType.APISUNAT, "EMIT_VOUCHER", command.comprobanteId());
+
                 attemptRepositoryPort.save(IntegrationAttempt.retry(
                         command.tenantId(),
                         ProviderType.APISUNAT,
                         "EMIT_VOUCHER",
                         command.comprobanteId(),
-                        1,
+                        numeroDeIntento,
                         e.getMessage()
                 ));
 
@@ -163,8 +205,7 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
                         ProviderType.APISUNAT,
                         "EMIT_VOUCHER",
                         command.comprobanteId(),
-                        serializeCommand(command),
-                        5
+                        serializeCommand(command),MAX_INTENTOS_REINTENTO
                 ));
             });
 
@@ -172,13 +213,20 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
         }
 
         if (emitido) {
-            unitOfWork.runInTransaction(() -> attemptRepositoryPort.save(IntegrationAttempt.ok(
-                    command.tenantId(),
-                    ProviderType.APISUNAT,
-                    "EMIT_VOUCHER",
-                    command.comprobanteId(),
-                    1
-            )));
+            // El intento correcto se consigna SOLO si se ha contactado con el
+            // proveedor: un intento correcto sin llamada es una operacion
+            // que no ocurrio.
+            unitOfWork.runInTransaction(() -> {
+                int numeroDeIntento = 1 + attemptRepositoryPort.countAttempts(
+                        command.tenantId(), ProviderType.APISUNAT, "EMIT_VOUCHER", command.comprobanteId());
+                attemptRepositoryPort.save(IntegrationAttempt.ok(
+                        command.tenantId(),
+                        ProviderType.APISUNAT,
+                        "EMIT_VOUCHER",
+                        command.comprobanteId(),
+                        numeroDeIntento
+                ));
+            });
         }
 
         // 4. Guardar registro de idempotencia
@@ -223,8 +271,36 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
                     1
             )));
         } catch (Exception e) {
+            // El proveedor NO esta disponible: el rechazo es TRANSITORIO. La
+            // anulacion se reprograma, en lugar de devolverse al cliente como
+            // un rechazo definitivo: el comprobante sigue sin anular, y el
+            // taller tiene que poder reintentarlo.
             log.warn("Error al anular comprobante en APISUNAT ({}): {}", comprobanteId, e.getMessage());
-            resultado = ResultadoDeclaracion.rechazado("500", "Fallo al comunicar anulación con APISUNAT: " + e.getMessage());
+
+            unitOfWork.runInTransaction(() -> {
+                int numeroDeIntento = 1 + attemptRepositoryPort.countAttempts(
+                        tenantId, ProviderType.APISUNAT, "VOID_VOUCHER", comprobanteId);
+
+                attemptRepositoryPort.save(IntegrationAttempt.retry(
+                        tenantId,
+                        ProviderType.APISUNAT,
+                        "VOID_VOUCHER",
+                        comprobanteId,
+                        numeroDeIntento,
+                        e.getMessage()));
+
+                retryQueueRepositoryPort.save(RetryTask.create(
+                        tenantId,
+                        ProviderType.APISUNAT,
+                        "VOID_VOUCHER",
+                        comprobanteId,
+                        "{\"tipo\":\"" + tipo + "\",\"serie\":\"" + serie + "\",\"numero\":" + numero
+                                + ",\"motivo\":\"" + (motivo != null ? motivo : "") + "\"}",
+                        5));
+            });
+
+            resultado = ResultadoDeclaracion.pendiente(
+                    "El servicio tributario no esta disponible: la anulacion se ha reprogramado");
         }
 
         return new ComprobanteResult(
@@ -280,6 +356,23 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
                 cmd.igv(),
                 cmd.total()
         );
+    }
+
+    /**
+     * La carga util de la peticion de emision. Es lo que se huella para
+     * distinguir el reintento del mismo comprobante de otra emision con la
+     * misma clave.
+     */
+    private String cargaUtilDe(EmitirComprobanteCommand command) {
+        return String.join("|",
+                String.valueOf(command.tenantId()),
+                String.valueOf(command.comprobanteId()),
+                String.valueOf(command.tipo()),
+                String.valueOf(command.serie()),
+                String.valueOf(command.numero()),
+                String.valueOf(command.clienteNumDoc()),
+                String.valueOf(command.total()),
+                String.valueOf(command.moneda()));
     }
 
     private String serializeResult(ComprobanteResult result) {

@@ -3,6 +3,7 @@ package com.erp.integrationhub.interfaces.rest.controller;
 import com.erp.integrationhub.application.usecase.ProcessRetryQueueUseCase;
 import com.erp.integrationhub.domain.model.AttemptStatus;
 import com.erp.integrationhub.domain.model.IntegrationAttempt;
+import com.erp.integrationhub.domain.usecase.ReactivateRetryTaskUseCase;
 import com.erp.integrationhub.domain.model.RetryTask;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
@@ -18,6 +19,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -34,6 +36,9 @@ import java.util.UUID;
 @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
 public class IntegrationAdminController {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(IntegrationAdminController.class);
+
     private static final int MAX_LIMIT = 100;
     private static final int DEFAULT_LIMIT = 50;
 
@@ -41,13 +46,17 @@ public class IntegrationAdminController {
     private final RetryQueueRepositoryPort retryQueueRepositoryPort;
     private final ProcessRetryQueueUseCase processRetryQueueUseCase;
 
+    private final ReactivateRetryTaskUseCase reactivateRetryTaskUseCase;
+
     public IntegrationAdminController(
+            ReactivateRetryTaskUseCase reactivateRetryTaskUseCase,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             RetryQueueRepositoryPort retryQueueRepositoryPort,
             ProcessRetryQueueUseCase processRetryQueueUseCase) {
         this.attemptRepositoryPort = attemptRepositoryPort;
         this.retryQueueRepositoryPort = retryQueueRepositoryPort;
         this.processRetryQueueUseCase = processRetryQueueUseCase;
+        this.reactivateRetryTaskUseCase = reactivateRetryTaskUseCase;
     }
 
     @GetMapping("/attempts")
@@ -111,6 +120,7 @@ public class IntegrationAdminController {
             @RequestParam(value = "limit", defaultValue = "50") int limit) {
 
         AuthenticatedUser authUser = getAuthenticatedUser();
+        registrarOperacion("consultar_cola_de_muertos", authUser, tenantId);
 
         if (tenantId == null && authUser != null && authUser.tenantId() != null) {
             tenantId = authUser.tenantId();
@@ -144,6 +154,19 @@ public class IntegrationAdminController {
         return ResponseEntity.ok(response);
     }
 
+    @PostMapping("/dlq/{id}/reactivate")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
+    @Operation(summary = "Reactivar una tarea en cola de muertos",
+            description = "Devuelve la tarea a la cola de pendientes con el contador de intentos restablecido")
+    public ResponseEntity<Map<String, Object>> reactivateTask(@PathVariable UUID id) {
+        RetryTask task = reactivateRetryTaskUseCase.reactivate(id);
+        return ResponseEntity.ok(Map.of(
+                "id", task.getId().toString(),
+                "status", task.getStatus(),
+                "attempts", task.getAttemptsCount(),
+                "nextRetryAt", String.valueOf(task.getNextRetryAt())));
+    }
+
     @PostMapping("/retry/trigger")
     @Operation(summary = "Trigger retry worker manually", description = "Executes the retry queue processor on-demand (ADMIN / INTERNAL_SERVICE only)")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
@@ -171,6 +194,20 @@ public class IntegrationAdminController {
         try (TenantContextScope scope = TenantContextScope.forTenant(tenantId)) {
             return operacion.get();
         }
+    }
+
+    /**
+     * Registra QUIEN ejecuta una operacion de administracion.
+     *
+     * <p>Con la identidad por servicio, la bitacora dice que servicio lo
+     * hizo, y no solo que se uso la credencial compartida.
+     */
+    private void registrarOperacion(String operacion, AuthenticatedUser authUser, UUID tenantId) {
+        String identidad = authUser != null && authUser.username() != null
+                ? authUser.username()
+                : "desconocida";
+        log.info("Operacion de administracion {} ejecutada por {} sobre el taller {}",
+                operacion, identidad, tenantId);
     }
 
     private AuthenticatedUser getAuthenticatedUser() {

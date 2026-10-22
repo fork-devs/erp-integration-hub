@@ -11,6 +11,7 @@ import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
 import com.erp.integrationhub.domain.port.UnitOfWork;
+import com.erp.integrationhub.domain.port.VoucherNumberingPort;
 import com.erp.integrationhub.domain.port.ValidadorIdentidadPort;
 import com.erp.integrationhub.domain.port.ValidadorVehicularPort;
 import com.erp.integrationhub.domain.port.IdentityCachePort;
@@ -67,6 +68,14 @@ public class ApplicationServiceConfig {
     private boolean apiperuSandboxMode;
 
     @Bean
+    public com.erp.integrationhub.domain.usecase.ReactivateRetryTaskUseCase reactivateRetryTaskUseCase(
+            RetryQueueRepositoryPort retryQueueRepositoryPort,
+            UnitOfWork unitOfWork) {
+        return new com.erp.integrationhub.application.service.RetryTaskReactivationService(
+                retryQueueRepositoryPort, unitOfWork);
+    }
+
+    @Bean
     public JwksKeyManager jwksKeyManager(
             @Value("${erp.security.jwks-url:https://auth.erp-automotriz.com/.well-known/jwks.json}") String jwksUrl,
             org.springframework.core.env.Environment environment) {
@@ -76,33 +85,15 @@ public class ApplicationServiceConfig {
     }
 
     @Bean
-    public EmisorTributarioPort emisorTributarioPort() {
-        return new ApiSunatElectronicInvoicingAdapter(apisunatBaseUrl, apisunatToken, apisunatSandboxMode);
-    }
-
-    @Bean
-    public PasarelaDePagoPort pasarelaDePagoPort() {
-        return new StripePaymentGatewayAdapter(stripeApiKey, stripeSandboxMode);
-    }
-
-    @Bean
-    public ValidadorIdentidadPort validadorIdentidadPort() {
-        return new ChequeaPeRucValidationAdapter(chequeaBaseUrl, chequeaToken, chequeaSandboxMode);
-    }
-
-    @Bean
-    public ValidadorVehicularPort validadorVehicularPort() {
-        return new SunarpVehicleValidationAdapter(apiperuBaseUrl, apiperuToken, apiperuSandboxMode);
-    }
-
-    @Bean
     public ElectronicInvoicingService electronicInvoicingService(
             EmisorTributarioPort emisorTributarioPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             RetryQueueRepositoryPort retryQueueRepositoryPort,
-            UnitOfWork unitOfWork) {
-        return new ElectronicInvoicingService(emisorTributarioPort, idempotencyRepositoryPort, attemptRepositoryPort, retryQueueRepositoryPort, unitOfWork);
+            UnitOfWork unitOfWork,
+            VoucherNumberingPort voucherNumberingPort) {
+        return new ElectronicInvoicingService(emisorTributarioPort, idempotencyRepositoryPort, attemptRepositoryPort,
+                retryQueueRepositoryPort, unitOfWork, voucherNumberingPort);
     }
 
     @Bean
@@ -133,8 +124,13 @@ public class ApplicationServiceConfig {
     public WebhookProcessingService webhookProcessingService(
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
+            com.erp.integrationhub.domain.port.ProcessedWebhookRepositoryPort processedWebhookRepositoryPort,
+            @Value("${erp.integration.webhook.signing-secret:}") String webhookSigningSecret,
+            @Value("${erp.integration.webhook.window-seconds:300}") long ventanaTemporalSegundos,
             UnitOfWork unitOfWork) {
-        return new WebhookProcessingService(stripeWebhookSecret, apisunatToken, attemptRepositoryPort, idempotencyRepositoryPort, unitOfWork);
+        return new WebhookProcessingService(stripeWebhookSecret, apisunatToken, attemptRepositoryPort,
+                idempotencyRepositoryPort, processedWebhookRepositoryPort, webhookSigningSecret,
+                ventanaTemporalSegundos, unitOfWork);
     }
 
     @Bean

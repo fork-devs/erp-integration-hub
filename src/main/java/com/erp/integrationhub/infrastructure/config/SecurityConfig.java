@@ -22,8 +22,10 @@ public class SecurityConfig {
     private String internalServiceKey;
 
     @Bean
-    public InternalServiceAuthenticationFilter internalServiceAuthenticationFilter(JwksKeyManager jwksKeyManager) {
-        return new InternalServiceAuthenticationFilter(internalServiceKey, jwksKeyManager);
+    public InternalServiceAuthenticationFilter internalServiceAuthenticationFilter(
+            JwksKeyManager jwksKeyManager,
+            org.springframework.core.env.Environment environment) {
+        return new InternalServiceAuthenticationFilter(internalServiceKey, jwksKeyManager, environment);
     }
 
     @Bean

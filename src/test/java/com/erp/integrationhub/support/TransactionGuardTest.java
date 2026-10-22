@@ -44,6 +44,7 @@ class TransactionGuardTest {
     void elAdaptadorDeIntentosFallaFueraDeUnLimiteTransaccional() {
         IntegrationAttemptPersistenceAdapter adapter = new IntegrationAttemptPersistenceAdapter(
                 mock(SpringDataIntegrationAttemptRepository.class),
+                mock(com.erp.integrationhub.infrastructure.persistence.rls.PlatformScopeQueryExecutor.class),
                 new TransactionGuard());
 
         MissingTransactionBoundaryException excepcion = assertThrows(

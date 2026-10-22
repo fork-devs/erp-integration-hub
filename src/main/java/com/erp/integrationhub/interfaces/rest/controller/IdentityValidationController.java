@@ -13,6 +13,7 @@ import com.erp.integrationhub.interfaces.rest.support.TenantContextScope;
 import com.erp.integrationhub.interfaces.rest.support.TenantResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,9 +32,15 @@ public class IdentityValidationController {
     private final ConsultarRucUseCase consultarRucUseCase;
     private final ConsultarPlacaUseCase consultarPlacaUseCase;
 
-    public IdentityValidationController(ConsultarRucUseCase consultarRucUseCase, ConsultarPlacaUseCase consultarPlacaUseCase) {
+    private final com.erp.integrationhub.infrastructure.security.TenantRateLimiter rateLimiter;
+
+    public IdentityValidationController(
+            ConsultarRucUseCase consultarRucUseCase,
+            ConsultarPlacaUseCase consultarPlacaUseCase,
+            com.erp.integrationhub.infrastructure.security.TenantRateLimiter rateLimiter) {
         this.consultarRucUseCase = consultarRucUseCase;
         this.consultarPlacaUseCase = consultarPlacaUseCase;
+        this.rateLimiter = rateLimiter;
     }
 
     @GetMapping("/ruc/{ruc}")
@@ -44,6 +51,16 @@ public class IdentityValidationController {
             @RequestHeader(value = "X-Tenant-ID", required = false) UUID requestedTenantId) {
 
         UUID effectiveTenantId = TenantResolver.resolveForOperation(requestedTenantId, AuthenticatedUserHolder.current());
+
+        // Limite por taller: la consulta llama a un proveedor externo, y la
+        // cuota se comparte entre todos los talleres.
+        if (!rateLimiter.intentar(effectiveTenantId)) {
+            long espera = rateLimiter.segundosDeEspera(effectiveTenantId);
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .header("Retry-After", String.valueOf(espera))
+                    .build();
+        }
+
         ConsultarRucCommand command = new ConsultarRucCommand(effectiveTenantId, ruc);
         RucResult result = enContextoDeTaller(effectiveTenantId, () -> consultarRucUseCase.consultarRuc(command));
         return ResponseEntity.ok(RucResponse.fromResult(result));
@@ -57,6 +74,16 @@ public class IdentityValidationController {
             @RequestHeader(value = "X-Tenant-ID", required = false) UUID requestedTenantId) {
 
         UUID effectiveTenantId = TenantResolver.resolveForOperation(requestedTenantId, AuthenticatedUserHolder.current());
+
+        // Limite por taller: la consulta llama a un proveedor externo, y la
+        // cuota se comparte entre todos los talleres.
+        if (!rateLimiter.intentar(effectiveTenantId)) {
+            long espera = rateLimiter.segundosDeEspera(effectiveTenantId);
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .header("Retry-After", String.valueOf(espera))
+                    .build();
+        }
+
         ConsultarPlacaCommand command = new ConsultarPlacaCommand(effectiveTenantId, placa);
         PlacaResult result = enContextoDeTaller(effectiveTenantId, () -> consultarPlacaUseCase.consultarPlaca(command));
         return ResponseEntity.ok(PlacaResponse.fromResult(result));

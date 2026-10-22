@@ -34,8 +34,12 @@ class InternalServiceAuthenticationFilterTest {
     private KeyPair keyPair;
     private final String keyId = "test-rsa-key-1";
 
+    private org.springframework.mock.env.MockEnvironment entorno;
+
     @BeforeEach
     void setUp() throws Exception {
+        entorno = new org.springframework.mock.env.MockEnvironment();
+
         KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
         kpg.initialize(2048);
         this.keyPair = kpg.generateKeyPair();
@@ -46,7 +50,7 @@ class InternalServiceAuthenticationFilterTest {
                 "http://localhost:8081/.well-known/jwks.json", List.of("dev"));
         this.jwksKeyManager.registerManualKey(keyId, (RSAPublicKey) keyPair.getPublic());
 
-        this.filter = new InternalServiceAuthenticationFilter(internalKey, jwksKeyManager);
+        this.filter = new InternalServiceAuthenticationFilter(internalKey, jwksKeyManager, entorno);
         SecurityContextHolder.clearContext();
     }
 

@@ -53,6 +53,14 @@ spring:
 erp:
   security:
     internal-service-key: ${INTERNAL_SERVICE_KEY:}
+  webhook:
+    # Clave de firma de los avisos, PROPIA y distinta de la credencial de
+    # acceso al proveedor: con la misma clave, quien tiene la credencial del
+    # proveedor podria fabricar avisos.
+    signing-secret: ${WEBHOOK_SIGNING_SECRET:}
+    # Ventana temporal admitida para un aviso, en segundos. Un aviso fuera de
+    # la ventana se rechaza: su firma es valida, pero el aviso es viejo.
+    window-seconds: ${WEBHOOK_WINDOW_SECONDS:300}
     # La URL del conjunto de claves debe usar un esquema cifrado. El arranque
     # falla de forma explicita si no lo hace, y la unica excepcion es el
     # perfil de desarrollo local (application-dev.yml).
@@ -64,6 +72,11 @@ erp:
       user: ${ERP_PLATFORM_ROLE_USER:erp_platform}
       password: ${ERP_PLATFORM_ROLE_PASSWORD:erp_platform_local_password}
   integration:
+    # Adaptadores de proveedor SIMULADOS. Solo admisibles en un perfil de
+    # desarrollo: fuera de el, el arranque falla de forma explicita. Un
+    # adaptador simulado fabrica respuestas que no corresponden a ningun
+    # proveedor real.
+    simulated-adapters: ${SIMULATED_ADAPTERS:false}
     apisunat:
       base-url: ${APISUNAT_BASE_URL:https://sandbox.apisunat.pe}
       token: ${APISUNAT_TOKEN:sandbox_token_apisunat}

@@ -4,6 +4,7 @@ import com.erp.integrationhub.application.dto.command.EmitirComprobanteCommand;
 import com.erp.integrationhub.application.dto.command.ItemComprobanteCommand;
 import com.erp.integrationhub.application.dto.result.ComprobanteResult;
 import com.erp.integrationhub.domain.model.ComprobanteParaDeclarar;
+import com.erp.integrationhub.domain.model.IdempotencyKeyState;
 import com.erp.integrationhub.domain.model.IdempotencyRecord;
 import com.erp.integrationhub.domain.model.IdempotencyScope;
 import com.erp.integrationhub.domain.model.ResultadoDeclaracion;
@@ -51,6 +52,9 @@ class ElectronicInvoicingServiceTest {
     @Mock
     private RetryQueueRepositoryPort retryQueueRepositoryPort;
 
+    @Mock
+    private com.erp.integrationhub.domain.port.VoucherNumberingPort numberingPort;
+
     private ElectronicInvoicingService electronicInvoicingService;
 
     private final UUID tenantId = UUID.randomUUID();
@@ -63,7 +67,8 @@ class ElectronicInvoicingServiceTest {
                 idempotencyRepositoryPort,
                 attemptRepositoryPort,
                 retryQueueRepositoryPort,
-                DirectUnitOfWork.INSTANCE
+                DirectUnitOfWork.INSTANCE,
+                numberingPort
         );
     }
 
@@ -145,7 +150,21 @@ class ElectronicInvoicingServiceTest {
         );
 
         String cachedJson = "{\"exitoso\":true,\"estadoSunat\":\"ACEPTADA\",\"codigo\":\"0\",\"mensaje\":\"Aceptada previamente\",\"pdfUrl\":\"https://storage.pe/pdf/F001-123.pdf\"}";
-        IdempotencyRecord existingRecord = new IdempotencyRecord(UUID.randomUUID(), tenantId, IdempotencyScope.VOUCHER, "idem-key-001", "hash", cachedJson, null);
+        // El registro almacenado lleva la huella de la MISMA peticion: con
+        // otra huella, la clave se rechaza por conflicto, porque no es la
+        // misma peticion.
+        String huella = com.erp.integrationhub.domain.util.PayloadFingerprint.of(String.join("|",
+                String.valueOf(tenantId),
+                String.valueOf(comprobanteId),
+                "FACTURA",
+                "F001",
+                "123",
+                "20123456789",
+                "11.80",
+                "PEN"));
+
+        IdempotencyRecord existingRecord = new IdempotencyRecord(UUID.randomUUID(), tenantId, IdempotencyScope.VOUCHER, "idem-key-001", huella, "hash", cachedJson,
+                IdempotencyKeyState.COMPLETED, java.time.Instant.now());
 
         when(idempotencyRepositoryPort.findByTenantAndScopeAndKey(tenantId, IdempotencyScope.VOUCHER, "idem-key-001"))
                 .thenReturn(Optional.of(existingRecord));

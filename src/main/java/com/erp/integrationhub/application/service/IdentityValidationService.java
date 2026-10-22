@@ -12,6 +12,7 @@ import com.erp.integrationhub.domain.model.IntegrationAttempt;
 import com.erp.integrationhub.domain.model.ProviderType;
 import com.erp.integrationhub.domain.port.IdentityCachePort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
+import com.erp.integrationhub.domain.port.UnitOfWork;
 import com.erp.integrationhub.domain.port.ValidadorIdentidadPort;
 import com.erp.integrationhub.domain.port.ValidadorVehicularPort;
 import org.slf4j.Logger;
@@ -28,16 +29,19 @@ public class IdentityValidationService implements ConsultarRucUseCase, Consultar
     private final ValidadorVehicularPort validadorVehicularPort;
     private final IdentityCachePort identityCachePort;
     private final IntegrationAttemptRepositoryPort attemptRepositoryPort;
+    private final UnitOfWork unitOfWork;
 
     public IdentityValidationService(
             ValidadorIdentidadPort validadorIdentidadPort,
             ValidadorVehicularPort validadorVehicularPort,
             IdentityCachePort identityCachePort,
-            IntegrationAttemptRepositoryPort attemptRepositoryPort) {
+            IntegrationAttemptRepositoryPort attemptRepositoryPort,
+            UnitOfWork unitOfWork) {
         this.validadorIdentidadPort = validadorIdentidadPort;
         this.validadorVehicularPort = validadorVehicularPort;
         this.identityCachePort = identityCachePort;
         this.attemptRepositoryPort = attemptRepositoryPort;
+        this.unitOfWork = unitOfWork;
     }
 
 
@@ -105,10 +109,10 @@ public class IdentityValidationService implements ConsultarRucUseCase, Consultar
                 ? UUID.nameUUIDFromBytes(referenceKey.getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 : UUID.randomUUID();
 
-        attemptRepositoryPort.save(error == null
+        unitOfWork.runInTransaction(() -> attemptRepositoryPort.save(error == null
                 ? IntegrationAttempt.ok(effectiveTenant, provider, op, referenceId, 1)
                 : IntegrationAttempt.retry(effectiveTenant, provider, op, referenceId, 1, error)
-        );
+        ));
     }
 
     private RucResult toRucResult(ConsultaRucResult r, boolean fromCache) {

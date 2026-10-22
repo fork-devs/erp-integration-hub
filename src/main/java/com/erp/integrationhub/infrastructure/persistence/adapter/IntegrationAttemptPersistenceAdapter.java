@@ -7,6 +7,7 @@ import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.infrastructure.persistence.entity.IntegrationAttemptJpaEntity;
 import com.erp.integrationhub.infrastructure.persistence.repository.SpringDataIntegrationAttemptRepository;
 import org.springframework.data.domain.PageRequest;
+import com.erp.integrationhub.infrastructure.persistence.TransactionGuard;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,22 +18,25 @@ import java.util.stream.Collectors;
 @Component
 public class IntegrationAttemptPersistenceAdapter implements IntegrationAttemptRepositoryPort {
 
+    private final TransactionGuard transactionGuard;
     private final SpringDataIntegrationAttemptRepository repository;
 
-    public IntegrationAttemptPersistenceAdapter(SpringDataIntegrationAttemptRepository repository) {
+    public IntegrationAttemptPersistenceAdapter(SpringDataIntegrationAttemptRepository repository,
+                                             TransactionGuard transactionGuard) {
         this.repository = repository;
+        this.transactionGuard = transactionGuard;
     }
 
     @Override
-    @Transactional
     public IntegrationAttempt save(IntegrationAttempt attempt) {
+        transactionGuard.requireActiveTransaction("saveIntegrationAttempt");
         IntegrationAttemptJpaEntity entity = toEntity(attempt);
         IntegrationAttemptJpaEntity saved = repository.save(entity);
         return toDomain(saved);
     }
 
     @Override
-    @Transactional
+    @Transactional(readOnly = true)
     public List<IntegrationAttempt> findByTenantIdAndReferenceId(UUID tenantId, UUID referenceId) {
         return repository.findByTenantIdAndReferenceId(tenantId, referenceId).stream()
                 .map(this::toDomain)
@@ -40,7 +44,7 @@ public class IntegrationAttemptPersistenceAdapter implements IntegrationAttemptR
     }
 
     @Override
-    @Transactional
+    @Transactional(readOnly = true)
     public List<IntegrationAttempt> findByTenantId(UUID tenantId, int limit) {
         return repository.findByTenantIdOrderByCreatedAtDesc(tenantId, PageRequest.of(0, limit)).stream()
                 .map(this::toDomain)
@@ -48,7 +52,7 @@ public class IntegrationAttemptPersistenceAdapter implements IntegrationAttemptR
     }
 
     @Override
-    @Transactional
+    @Transactional(readOnly = true)
     public List<IntegrationAttempt> findByTenantIdAndStatus(UUID tenantId, AttemptStatus status, int limit) {
         return repository.findByTenantIdAndStatusOrderByCreatedAtDesc(tenantId, status.name(), PageRequest.of(0, limit)).stream()
                 .map(this::toDomain)

@@ -13,6 +13,7 @@ import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import com.erp.integrationhub.support.DirectUnitOfWork;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -61,7 +62,8 @@ class ElectronicInvoicingServiceTest {
                 emisorTributarioPort,
                 idempotencyRepositoryPort,
                 attemptRepositoryPort,
-                retryQueueRepositoryPort
+                retryQueueRepositoryPort,
+                DirectUnitOfWork.INSTANCE
         );
     }
 

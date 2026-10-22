@@ -13,6 +13,7 @@ import com.erp.integrationhub.domain.port.ValidadorVehicularPort;
 import com.erp.integrationhub.infrastructure.adapter.cache.RedisIdentityCacheAdapter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import com.erp.integrationhub.support.DirectUnitOfWork;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -53,7 +54,8 @@ class IdentityValidationServiceTest {
                 validadorIdentidadPort,
                 validadorVehicularPort,
                 identityCachePort,
-                attemptRepositoryPort
+                attemptRepositoryPort,
+                DirectUnitOfWork.INSTANCE
         );
     }
 

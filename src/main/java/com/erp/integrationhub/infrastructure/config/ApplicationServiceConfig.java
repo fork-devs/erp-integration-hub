@@ -10,6 +10,7 @@ import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
+import com.erp.integrationhub.domain.port.UnitOfWork;
 import com.erp.integrationhub.domain.port.ValidadorIdentidadPort;
 import com.erp.integrationhub.domain.port.ValidadorVehicularPort;
 import com.erp.integrationhub.domain.port.IdentityCachePort;
@@ -89,16 +90,18 @@ public class ApplicationServiceConfig {
             EmisorTributarioPort emisorTributarioPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
-            RetryQueueRepositoryPort retryQueueRepositoryPort) {
-        return new ElectronicInvoicingService(emisorTributarioPort, idempotencyRepositoryPort, attemptRepositoryPort, retryQueueRepositoryPort);
+            RetryQueueRepositoryPort retryQueueRepositoryPort,
+            UnitOfWork unitOfWork) {
+        return new ElectronicInvoicingService(emisorTributarioPort, idempotencyRepositoryPort, attemptRepositoryPort, retryQueueRepositoryPort, unitOfWork);
     }
 
     @Bean
     public PaymentIntegrationService paymentIntegrationService(
             PasarelaDePagoPort pasarelaDePagoPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
-            IntegrationAttemptRepositoryPort attemptRepositoryPort) {
-        return new PaymentIntegrationService(pasarelaDePagoPort, idempotencyRepositoryPort, attemptRepositoryPort);
+            IntegrationAttemptRepositoryPort attemptRepositoryPort,
+            UnitOfWork unitOfWork) {
+        return new PaymentIntegrationService(pasarelaDePagoPort, idempotencyRepositoryPort, attemptRepositoryPort, unitOfWork);
     }
 
     @Bean
@@ -111,15 +114,17 @@ public class ApplicationServiceConfig {
             ValidadorIdentidadPort validadorIdentidadPort,
             ValidadorVehicularPort validadorVehicularPort,
             IdentityCachePort identityCachePort,
-            IntegrationAttemptRepositoryPort attemptRepositoryPort) {
-        return new IdentityValidationService(validadorIdentidadPort, validadorVehicularPort, identityCachePort, attemptRepositoryPort);
+            IntegrationAttemptRepositoryPort attemptRepositoryPort,
+            UnitOfWork unitOfWork) {
+        return new IdentityValidationService(validadorIdentidadPort, validadorVehicularPort, identityCachePort, attemptRepositoryPort, unitOfWork);
     }
 
     @Bean
     public WebhookProcessingService webhookProcessingService(
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
-            IdempotencyRepositoryPort idempotencyRepositoryPort) {
-        return new WebhookProcessingService(stripeWebhookSecret, apisunatToken, attemptRepositoryPort, idempotencyRepositoryPort);
+            IdempotencyRepositoryPort idempotencyRepositoryPort,
+            UnitOfWork unitOfWork) {
+        return new WebhookProcessingService(stripeWebhookSecret, apisunatToken, attemptRepositoryPort, idempotencyRepositoryPort, unitOfWork);
     }
 
     @Bean
@@ -128,7 +133,8 @@ public class ApplicationServiceConfig {
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
             EmisorTributarioPort emisorTributarioPort,
-            PasarelaDePagoPort pasarelaDePagoPort) {
-        return new RetrySchedulerService(retryQueueRepositoryPort, attemptRepositoryPort, idempotencyRepositoryPort, emisorTributarioPort, pasarelaDePagoPort);
+            PasarelaDePagoPort pasarelaDePagoPort,
+            UnitOfWork unitOfWork) {
+        return new RetrySchedulerService(retryQueueRepositoryPort, attemptRepositoryPort, idempotencyRepositoryPort, emisorTributarioPort, pasarelaDePagoPort, unitOfWork);
     }
 }

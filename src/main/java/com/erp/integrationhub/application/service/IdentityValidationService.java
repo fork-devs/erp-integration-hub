@@ -12,6 +12,7 @@ import com.erp.integrationhub.domain.model.IntegrationAttempt;
 import com.erp.integrationhub.domain.model.ProviderType;
 import com.erp.integrationhub.domain.port.IdentityCachePort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
+import com.erp.integrationhub.domain.port.UnitOfWork;
 import com.erp.integrationhub.domain.port.ValidadorIdentidadPort;
 import com.erp.integrationhub.domain.port.ValidadorVehicularPort;
 import org.slf4j.Logger;
@@ -28,19 +29,21 @@ public class IdentityValidationService implements ConsultarRucUseCase, Consultar
     private final ValidadorVehicularPort validadorVehicularPort;
     private final IdentityCachePort identityCachePort;
     private final IntegrationAttemptRepositoryPort attemptRepositoryPort;
+    private final UnitOfWork unitOfWork;
 
     public IdentityValidationService(
             ValidadorIdentidadPort validadorIdentidadPort,
             ValidadorVehicularPort validadorVehicularPort,
             IdentityCachePort identityCachePort,
-            IntegrationAttemptRepositoryPort attemptRepositoryPort) {
+            IntegrationAttemptRepositoryPort attemptRepositoryPort,
+            UnitOfWork unitOfWork) {
         this.validadorIdentidadPort = validadorIdentidadPort;
         this.validadorVehicularPort = validadorVehicularPort;
         this.identityCachePort = identityCachePort;
         this.attemptRepositoryPort = attemptRepositoryPort;
+        this.unitOfWork = unitOfWork;
     }
 
-    public static final UUID SYSTEM_TENANT_ID = UUID.fromString("00000000-0000-0000-0000-000000000000");
 
     @Override
     public RucResult consultarRuc(ConsultarRucCommand command) {
@@ -101,15 +104,20 @@ public class IdentityValidationService implements ConsultarRucUseCase, Consultar
     }
 
     private void logAttempt(UUID tenantId, ProviderType provider, String op, String referenceKey, String error) {
-        UUID effectiveTenant = tenantId != null ? tenantId : SYSTEM_TENANT_ID;
+        UUID effectiveTenant = tenantId;
         UUID referenceId = (referenceKey != null && !referenceKey.isBlank())
                 ? UUID.nameUUIDFromBytes(referenceKey.getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 : UUID.randomUUID();
 
-        attemptRepositoryPort.save(error == null
-                ? IntegrationAttempt.ok(effectiveTenant, provider, op, referenceId, 1)
-                : IntegrationAttempt.retry(effectiveTenant, provider, op, referenceId, 1, error)
-        );
+        unitOfWork.runInTransaction(() -> {
+            // El numero de intento es la progresion real, no una constante.
+            int numeroDeIntento = 1 + attemptRepositoryPort.countAttempts(
+                    effectiveTenant, provider, op, referenceId);
+            attemptRepositoryPort.save(error == null
+                    ? IntegrationAttempt.ok(effectiveTenant, provider, op, referenceId, numeroDeIntento)
+                    : IntegrationAttempt.retry(effectiveTenant, provider, op, referenceId, numeroDeIntento, error)
+            );
+        });
     }
 
     private RucResult toRucResult(ConsultaRucResult r, boolean fromCache) {

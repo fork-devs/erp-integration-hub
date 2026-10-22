@@ -2,6 +2,7 @@ package com.erp.integrationhub.infrastructure.persistence.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
@@ -16,7 +17,19 @@ import java.util.UUID;
 )
 public class IdempotencyKeyJpaEntity {
 
+    /**
+     * El identificador lo ASIGNA la base de datos, no la aplicacion.
+     *
+     * <p>Con el identificador asignado por el codigo, un guardado de una
+     * entidad que ya existe se resolvia como una INSERCIÓN: el registro
+     * duplicado violaba la clave primaria, y la actualizacion del resultado
+     * de una operacion idempotente era IMPOSIBLE. La actualizacion es
+     * justamente lo que hace falta para que el resultado del reintento
+     * llegue a la fila que ya existe.
+     */
     @Id
+    @GeneratedValue
+    @org.hibernate.annotations.ColumnDefault("gen_random_uuid()")
     private UUID id;
 
     @Column(name = "tenant_id", nullable = false)
@@ -27,6 +40,12 @@ public class IdempotencyKeyJpaEntity {
 
     @Column(name = "key_val", nullable = false, length = 255)
     private String key;
+
+    @Column(name = "request_hash", length = 64)
+    private String requestHash;
+
+    @Column(name = "state", nullable = false, length = 20)
+    private String state;
 
     @Column(name = "response_hash", length = 255)
     private String responseHash;
@@ -39,11 +58,14 @@ public class IdempotencyKeyJpaEntity {
 
     public IdempotencyKeyJpaEntity() {}
 
-    public IdempotencyKeyJpaEntity(UUID id, UUID tenantId, String scope, String key, String responseHash, String responsePayload, Instant createdAt) {
+    public IdempotencyKeyJpaEntity(UUID id, UUID tenantId, String scope, String key, String requestHash,
+                                    String state, String responseHash, String responsePayload, Instant createdAt) {
         this.id = id;
         this.tenantId = tenantId;
         this.scope = scope;
         this.key = key;
+        this.requestHash = requestHash;
+        this.state = state;
         this.responseHash = responseHash;
         this.responsePayload = responsePayload;
         this.createdAt = createdAt;
@@ -79,6 +101,22 @@ public class IdempotencyKeyJpaEntity {
 
     public void setKey(String key) {
         this.key = key;
+    }
+
+    public String getRequestHash() {
+        return requestHash;
+    }
+
+    public void setRequestHash(String requestHash) {
+        this.requestHash = requestHash;
+    }
+
+    public String getState() {
+        return state;
+    }
+
+    public void setState(String state) {
+        this.state = state;
     }
 
     public String getResponseHash() {

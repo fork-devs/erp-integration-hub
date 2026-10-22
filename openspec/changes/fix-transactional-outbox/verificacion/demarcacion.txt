@@ -1,0 +1,94 @@
+=== Verificacion de la demarcacion transaccional (fix-transactional-outbox) ===
+Generado: 2026-10-21T07:43:37-0500
+
+--- 1) Ningun adaptador de persistencia declara demarcacion propia ---
+    (solo se admite @Transactional(readOnly = true) en las lecturas)
+
+    erp-tenant-service:
+      erp-tenant-service/src/main/java/com/erp/tenant/infrastructure/persistence/adapter/TenantPersistenceAdapter.java:39:    @Transactional(readOnly = true)
+      erp-tenant-service/src/main/java/com/erp/tenant/infrastructure/persistence/adapter/TenantPersistenceAdapter.java:46:    @Transactional(readOnly = true)
+      erp-tenant-service/src/main/java/com/erp/tenant/infrastructure/persistence/adapter/TenantPersistenceAdapter.java:53:    @Transactional(readOnly = true)
+      erp-tenant-service/src/main/java/com/erp/tenant/infrastructure/persistence/adapter/TenantPersistenceAdapter.java:59:    @Transactional(readOnly = true)
+      erp-tenant-service/src/main/java/com/erp/tenant/infrastructure/persistence/adapter/PlanPersistenceAdapter.java:26:    @Transactional(readOnly = true)
+      erp-tenant-service/src/main/java/com/erp/tenant/infrastructure/persistence/adapter/PlanPersistenceAdapter.java:33:    @Transactional(readOnly = true)
+      erp-tenant-service/src/main/java/com/erp/tenant/infrastructure/persistence/adapter/PlanPersistenceAdapter.java:40:    @Transactional(readOnly = true)
+      erp-tenant-service/src/main/java/com/erp/tenant/infrastructure/persistence/adapter/SubscriptionPersistenceAdapter.java:36:    @Transactional(readOnly = true)
+      erp-tenant-service/src/main/java/com/erp/tenant/infrastructure/persistence/adapter/SubscriptionPersistenceAdapter.java:43:    @Transactional(readOnly = true)
+      erp-tenant-service/src/main/java/com/erp/tenant/infrastructure/persistence/adapter/TenantOutboxPersistenceAdapter.java:50:    @Transactional(readOnly = true)
+
+    erp-auth-service:
+      erp-auth-service/src/main/java/com/erp/auth/infrastructure/persistence/adapter/RolePersistenceAdapter.java:27:    @Transactional(readOnly = true)
+      erp-auth-service/src/main/java/com/erp/auth/infrastructure/persistence/adapter/RolePersistenceAdapter.java:34:    @Transactional(readOnly = true)
+      erp-auth-service/src/main/java/com/erp/auth/infrastructure/persistence/adapter/RolePersistenceAdapter.java:41:    @Transactional(readOnly = true)
+      erp-auth-service/src/main/java/com/erp/auth/infrastructure/persistence/adapter/RolePersistenceAdapter.java:50:    @Transactional(readOnly = true)
+      erp-auth-service/src/main/java/com/erp/auth/infrastructure/persistence/adapter/PasswordResetTokenPersistenceAdapter.java:36:    @Transactional(readOnly = true)
+      erp-auth-service/src/main/java/com/erp/auth/infrastructure/persistence/adapter/PasswordResetTokenPersistenceAdapter.java:43:    @Transactional(readOnly = true)
+      erp-auth-service/src/main/java/com/erp/auth/infrastructure/persistence/adapter/RefreshTokenPersistenceAdapter.java:36:    @Transactional(readOnly = true)
+      erp-auth-service/src/main/java/com/erp/auth/infrastructure/persistence/adapter/RefreshTokenPersistenceAdapter.java:43:    @Transactional(readOnly = true)
+      erp-auth-service/src/main/java/com/erp/auth/infrastructure/persistence/adapter/UserPersistenceAdapter.java:49:    @Transactional(readOnly = true)
+      erp-auth-service/src/main/java/com/erp/auth/infrastructure/persistence/adapter/UserPersistenceAdapter.java:56:    @Transactional(readOnly = true)
+      erp-auth-service/src/main/java/com/erp/auth/infrastructure/persistence/adapter/UserPersistenceAdapter.java:63:    @Transactional(readOnly = true)
+      erp-auth-service/src/main/java/com/erp/auth/infrastructure/persistence/adapter/UserPersistenceAdapter.java:69:    @Transactional(readOnly = true)
+
+    erp-integration-hub:
+      erp-integration-hub/src/main/java/com/erp/integrationhub/infrastructure/persistence/adapter/IdempotencyPersistenceAdapter.java:28:    @Transactional(readOnly = true)
+      erp-integration-hub/src/main/java/com/erp/integrationhub/infrastructure/persistence/adapter/IntegrationAttemptPersistenceAdapter.java:39:    @Transactional(readOnly = true)
+      erp-integration-hub/src/main/java/com/erp/integrationhub/infrastructure/persistence/adapter/IntegrationAttemptPersistenceAdapter.java:47:    @Transactional(readOnly = true)
+      erp-integration-hub/src/main/java/com/erp/integrationhub/infrastructure/persistence/adapter/IntegrationAttemptPersistenceAdapter.java:55:    @Transactional(readOnly = true)
+      erp-integration-hub/src/main/java/com/erp/integrationhub/infrastructure/persistence/adapter/RetryQueuePersistenceAdapter.java:47:    @Transactional(readOnly = true)
+      erp-integration-hub/src/main/java/com/erp/integrationhub/infrastructure/persistence/adapter/RetryQueuePersistenceAdapter.java:64:    @Transactional(readOnly = true)
+      erp-integration-hub/src/main/java/com/erp/integrationhub/infrastructure/persistence/adapter/RetryQueuePersistenceAdapter.java:72:    @Transactional(readOnly = true)
+
+    La comprobacion automatizada que lo verifica:
+      erp-tenant-service/src/test/java/com/erp/*/architecture/TransactionDemarcationArchitectureTest.java
+      erp-auth-service/src/test/java/com/erp/*/architecture/TransactionDemarcationArchitectureTest.java
+      erp-integration-hub/src/test/java/com/erp/*/architecture/TransactionDemarcationArchitectureTest.java
+
+--- 2) El puerto UnitOfWork existe en los tres servicios ---
+      erp-tenant-service/src/main/java/com/erp/*/domain/port/UnitOfWork.java
+      erp-tenant-service/src/main/java/com/erp/*/infrastructure/config/UnitOfWorkAdapter.java
+      erp-auth-service/src/main/java/com/erp/*/domain/port/UnitOfWork.java
+      erp-auth-service/src/main/java/com/erp/*/infrastructure/config/UnitOfWorkAdapter.java
+      erp-integration-hub/src/main/java/com/erp/*/domain/port/UnitOfWork.java
+      erp-integration-hub/src/main/java/com/erp/*/infrastructure/config/UnitOfWorkAdapter.java
+
+--- 3) Los casos de uso de escritura usan el limite transaccional ---
+
+    erp-tenant-service:
+      erp-tenant-service/src/main/java/com/erp/tenant/application/service/OutboxProcessorService.java
+      erp-tenant-service/src/main/java/com/erp/tenant/application/service/TenantManagementService.java
+      erp-tenant-service/src/main/java/com/erp/tenant/application/service/TenantProvisioningService.java
+      erp-tenant-service/src/main/java/com/erp/tenant/application/service/OutboxDeadLetterService.java
+
+    erp-auth-service:
+      erp-auth-service/src/main/java/com/erp/auth/application/service/RegisterUserService.java
+      erp-auth-service/src/main/java/com/erp/auth/application/service/AuthenticateUserService.java
+      erp-auth-service/src/main/java/com/erp/auth/application/service/PasswordResetService.java
+      erp-auth-service/src/main/java/com/erp/auth/application/service/RefreshTokenService.java
+
+    erp-integration-hub:
+      erp-integration-hub/src/main/java/com/erp/integrationhub/application/service/PaymentIntegrationService.java
+      erp-integration-hub/src/main/java/com/erp/integrationhub/application/service/ElectronicInvoicingService.java
+      erp-integration-hub/src/main/java/com/erp/integrationhub/application/service/RetrySchedulerService.java
+      erp-integration-hub/src/main/java/com/erp/integrationhub/application/service/IdentityValidationService.java
+      erp-integration-hub/src/main/java/com/erp/integrationhub/application/service/WebhookProcessingService.java
+
+--- 4) La comprobacion falla si se reintroduce el @Transactional en un adapter ---
+    Verificado sobre erp-tenant-service: se reintrodajo @Transactional en
+    TenantPersistenceAdapter.save y la comprobacion fallo, señalando
+    'src/main/java/com/erp/tenant/infrastructure/persistence/adapter/TenantPersistenceAdapter.java:31  @Transactional'.
+    Se revirtio a continuacion.
+
+--- 5) Suite completa de los tres servicios ---
+
+    erp-tenant-service:
+      [INFO] Tests run: 62, Failures: 0, Errors: 0, Skipped: 0
+      [INFO] BUILD SUCCESS
+
+    erp-auth-service:
+      [INFO] Tests run: 47, Failures: 0, Errors: 0, Skipped: 0
+      [INFO] BUILD SUCCESS
+
+    erp-integration-hub:
+      [INFO] Tests run: 51, Failures: 0, Errors: 0, Skipped: 0
+      [INFO] BUILD SUCCESS

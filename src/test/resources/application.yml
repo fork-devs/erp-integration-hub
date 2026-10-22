@@ -1,18 +1,19 @@
 spring:
+  profiles:
+    active: dev
   application:
     name: erp-integration-hub-test
-  datasource:
-    url: jdbc:h2:mem:integration_test_db;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
-    driver-class-name: org.h2.Driver
-    username: sa
-    password: ""
+  # El perfil de test NO define datasource: la configuracion de la base de
+  # datos la inyecta AbstractPostgresIntegrationTest, que arranca una
+  # instancia real de PostgreSQL en proceso.
+  #
+  # Antes se usaba H2 con ddl-auto: create-drop y Flyway desactivado, con lo
+  # que la politica de Row-Level Security nunca se ejecutaba y una migracion
+  # alterada no se detectaba nunca.
   jpa:
-    hibernate:
-      ddl-auto: create-drop
-    database-platform: org.hibernate.dialect.H2Dialect
     show-sql: false
   flyway:
-    enabled: false
+    enabled: true
 
 erp:
   security:

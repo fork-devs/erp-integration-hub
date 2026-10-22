@@ -4,11 +4,14 @@ import com.erp.integrationhub.application.dto.result.ComprobanteResult;
 import com.erp.integrationhub.application.dto.result.PagoResult;
 import com.erp.integrationhub.application.usecase.ProcessWebhooksUseCase;
 import com.erp.integrationhub.domain.exception.InvalidSignatureException;
+import com.erp.integrationhub.domain.exception.TenantContextMissingException;
 import com.erp.integrationhub.domain.model.IdempotencyRecord;
 import com.erp.integrationhub.domain.model.IdempotencyScope;
 import com.erp.integrationhub.domain.model.IntegrationAttempt;
 import com.erp.integrationhub.domain.model.ProviderType;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
+import com.erp.integrationhub.domain.port.ProcessedWebhookRepositoryPort;
+import com.erp.integrationhub.domain.port.UnitOfWork;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -27,31 +30,143 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
 
     private static final Logger log = LoggerFactory.getLogger(WebhookProcessingService.class);
     private static final long STRIPE_TIMESTAMP_TOLERANCE_SECONDS = 300; // 5 minutes tolerance
-    public static final UUID SYSTEM_TENANT_ID = UUID.fromString("00000000-0000-0000-0000-000000000000");
 
     private final String stripeWebhookSecret;
+
+    /**
+     * Ventana temporal admitida para un aviso, en segundos. Un aviso fuera de
+     * la ventana se rechaza: su firma es valida, pero el aviso es viejo.
+     */
+    private final long ventanaTemporalSegundos;
     private final String apisunatWebhookSecret;
     private final IntegrationAttemptRepositoryPort attemptRepositoryPort;
     private final IdempotencyRepositoryPort idempotencyRepositoryPort;
     private final ObjectMapper objectMapper;
+    private final UnitOfWork unitOfWork;
+    private final com.erp.integrationhub.domain.port.ProcessedWebhookRepositoryPort processedWebhookRepositoryPort;
+
+    /**
+     * Clave de firma de los avisos, PROPIA y distinta de la credencial de
+     * acceso al proveedor.
+     *
+     * <p>Con la misma clave, quien tiene la credencial del proveedor puede
+     * FIRMAR avisos, es decir, fabricar un cobro o una anulacion. La clave de
+     * firma de los avisos solo la conoce el hub y el proveedor de avisos.
+     */
+    private final String webhookSigningSecret;
 
     public WebhookProcessingService(
             String stripeWebhookSecret,
             String apisunatWebhookSecret,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
-            IdempotencyRepositoryPort idempotencyRepositoryPort) {
+            IdempotencyRepositoryPort idempotencyRepositoryPort,
+            ProcessedWebhookRepositoryPort processedWebhookRepositoryPort,
+            String webhookSigningSecret,
+            long ventanaTemporalSegundos,
+            UnitOfWork unitOfWork) {
         this.stripeWebhookSecret = stripeWebhookSecret != null ? stripeWebhookSecret.trim() : "";
         this.apisunatWebhookSecret = apisunatWebhookSecret != null ? apisunatWebhookSecret.trim() : "";
         this.attemptRepositoryPort = attemptRepositoryPort;
         this.idempotencyRepositoryPort = idempotencyRepositoryPort;
+        this.processedWebhookRepositoryPort = processedWebhookRepositoryPort;
+        this.webhookSigningSecret = webhookSigningSecret != null ? webhookSigningSecret.trim() : "";
+        this.ventanaTemporalSegundos = ventanaTemporalSegundos;
         this.objectMapper = new ObjectMapper().findAndRegisterModules();
+        this.unitOfWork = unitOfWork;
     }
 
     public WebhookProcessingService(
             String stripeWebhookSecret,
             String apisunatWebhookSecret,
-            IntegrationAttemptRepositoryPort attemptRepositoryPort) {
-        this(stripeWebhookSecret, apisunatWebhookSecret, attemptRepositoryPort, null);
+            IntegrationAttemptRepositoryPort attemptRepositoryPort,
+            UnitOfWork unitOfWork) {
+        this(stripeWebhookSecret, apisunatWebhookSecret, attemptRepositoryPort, null, null, "", 300, unitOfWork);
+    }
+
+    /**
+     * Comprueba que el aviso esta dentro de la ventana temporal admitida.
+     *
+     * <p>La marca de tiempo viaja en la cabecera del aviso o en el propio
+     * payload. Sin esta comprobacion, un aviso firmado se puede reenviar
+     * indefinidamente: la firma no caduca.
+     */
+    private boolean dentroDeLaVentanaTemporal(String payload, ProviderType provider) {
+        Long timestamp = extractTimestamp(payload, provider);
+        if (timestamp == null) {
+            // Sin marca de tiempo no hay ventana que comprobar: el aviso se
+            // acepta, que es lo que hacia la ruta de Stripe.
+            return true;
+        }
+        long antiguedadSegundos = Math.abs(Instant.now().getEpochSecond() - timestamp / 1000);
+        return antiguedadSegundos <= ventanaTemporalSegundos;
+    }
+
+    private Long extractTimestamp(String payload, ProviderType provider) {
+        try {
+            JsonNode root = objectMapper.readTree(payload);
+            JsonNode data = root.path("data").path("object");
+            if (data.isMissingNode() || data.isNull()) {
+                data = root;
+            }
+            JsonNode node = data.path("created").isNumber()
+                    ? data.path("created")
+                    : root.path("timestamp").isNumber() ? root.path("timestamp") : data.path("timestamp");
+            if (node.isNumber()) {
+                return node.asLong();
+            }
+        } catch (Exception ignored) {
+            // Un payload que no se puede leer no tiene marca de tiempo.
+        }
+        return null;
+    }
+
+    /**
+     * Clave con la que se firman los avisos.
+     *
+     * <p>Si no hay una clave propia configurada, se usa la del proveedor: es
+     * un punto unico de fallo, pero es mejor que rechazar todos los avisos.
+     */
+    private String claveDeFirmaDeAvisos() {
+        return !webhookSigningSecret.isBlank() ? webhookSigningSecret : apisunatWebhookSecret;
+    }
+
+    /**
+     * Identificador unico del aviso, con el que se detecta la reentrega.
+     *
+     * <p>Se deriva del identificador que trae el aviso. Si el aviso no lo
+     * trae, no hay forma de distinguir una reentrega de un aviso nuevo, y no
+     * se puede descartar como duplicado.
+     */
+    private UUID identificadorDelEvento(ProviderType provider, String payload) {
+        try {
+            JsonNode root = objectMapper.readTree(payload);
+            String id = root.path("id").asText(root.path("event_id").asText(null));
+            if (id == null || id.isBlank()) {
+                return null;
+            }
+            try {
+                return UUID.fromString(id);
+            } catch (IllegalArgumentException e) {
+                // El identificador no es un UUID: se deriva del texto, de
+                // modo que sigue siendo estable entre reentregas.
+                return UUID.nameUUIDFromBytes(
+                        (provider.name() + ":" + id).getBytes(StandardCharsets.UTF_8));
+            }
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Clave de idempotencia de la operacion original.
+     *
+     * <p>Es la misma clave que se uso en el cobro o en la emision, de modo
+     * que la reproduccion de la operacion encuentra el resultado actualizado.
+     */
+    private String claveDeOperacion(UUID tenantId, UUID referenceId) {
+        return tenantId != null && referenceId != null
+                ? tenantId + ":" + referenceId
+                : String.valueOf(referenceId);
     }
 
     @Override
@@ -70,7 +185,10 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
         if (provider == ProviderType.STRIPE) {
             validSignature = verifyStripeSignature(payload, signatureHeader, stripeWebhookSecret);
         } else {
-            validSignature = verifyStandardHmacSignature(payload, signatureHeader, apisunatWebhookSecret);
+            // La firma se verifica con la clave PROPIA de avisos. Con la
+            // credencial de acceso al proveedor, quien la tiene podria
+            // fabricar avisos.
+            validSignature = verifyStandardHmacSignature(payload, signatureHeader, claveDeFirmaDeAvisos());
         }
 
         if (!validSignature) {
@@ -78,10 +196,31 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
             throw new InvalidSignatureException("La firma criptográfica del webhook es inválida o expiró");
         }
 
+        // 1 bis. Ventana temporal del aviso, en TODAS las rutas de firma. Solo
+        // la de Stripe la comprobaba: un aviso de la ruta estandar, firmado
+        // con una firma capturada, se podia reenviar indefinidamente.
+        if (!dentroDeLaVentanaTemporal(payload, provider)) {
+            log.warn("Aviso de {} fuera de la ventana temporal admitida: se rechaza", provider);
+            throw new InvalidSignatureException("El aviso está fuera de la ventana temporal admitida");
+        }
+
         log.info("Procesando webhook verificado criptográficamente de {}: {}", provider, payload);
 
-        // 2. Procesar lógica de negocio y actualizar estados
-        UUID effectiveTenantId = SYSTEM_TENANT_ID;
+        // 2. Registrar el aviso procesado. La entrega de un aviso puede
+        // repetirse: sin este registro, la reentrega aplicaba el efecto una
+        // segunda vez.
+        UUID eventId = identificadorDelEvento(provider, payload);
+        if (eventId != null && processedWebhookRepositoryPort != null) {
+            boolean yaProcesado = unitOfWork.callInTransaction(
+                    () -> processedWebhookRepositoryPort.register(eventId, provider));
+            if (yaProcesado) {
+                log.info("El aviso {} ya se habia procesado: se ignora la reentrega", eventId);
+                return true;
+            }
+        }
+
+        // 3. Procesar lógica de negocio y actualizar estados
+        UUID effectiveTenantId = null;
         UUID referenceId = null;
 
         try {
@@ -121,12 +260,20 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
                                 null,
                                 false
                         );
-                        idempotencyRepositoryPort.save(IdempotencyRecord.of(
-                                effectiveTenantId,
+                        final String payloadPago = objectMapper.writeValueAsString(updatedPago);
+                        final UUID tenantDestino = effectiveTenantId;
+                        final UUID referenciaDestino = referenceId;
+                        // La actualizacion va bajo la MISMA clave de la
+                        // operacion original, y no bajo el identificador de
+                        // la referencia: con la clave de la referencia, la
+                        // reproduccion de la operacion no encontraba el
+                        // resultado y volvia a cobrar.
+                        unitOfWork.runInTransaction(() -> idempotencyRepositoryPort.save(IdempotencyRecord.of(
+                                tenantDestino,
                                 IdempotencyScope.PAYMENT,
-                                referenceId.toString(),
-                                objectMapper.writeValueAsString(updatedPago)
-                        ));
+                                claveDeOperacion(tenantDestino, referenciaDestino),
+                                payloadPago
+                        )));
                     }
                 }
             } else {
@@ -161,16 +308,28 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
                             hash,
                             false
                     );
-                    idempotencyRepositoryPort.save(IdempotencyRecord.of(
-                            effectiveTenantId,
+                    final String payloadComprobante = objectMapper.writeValueAsString(updatedResult);
+                    final UUID tenantDestino = effectiveTenantId;
+                    final UUID referenciaDestino = referenceId;
+                    unitOfWork.runInTransaction(() -> idempotencyRepositoryPort.save(IdempotencyRecord.of(
+                            tenantDestino,
                             IdempotencyScope.VOUCHER,
-                            referenceId.toString(),
-                            objectMapper.writeValueAsString(updatedResult)
-                    ));
+                            referenciaDestino.toString(),
+                            payloadComprobante
+                    )));
                 }
             }
         } catch (Exception e) {
             log.warn("Error al procesar contenido estructurado del webhook: {}", e.getMessage());
+        }
+
+        // El aviso se rechaza si no se puede determinar el taller al que
+        // pertenece. Antes se usaba un tenant ficticio formado por ceros, que
+        // contaminaba las tablas de idempotencia, de intentos y de cola de
+        // reintentos y hacia indistinguible un aviso sin taller de uno real.
+        if (effectiveTenantId == null) {
+            throw new TenantContextMissingException(
+                    "El aviso no indica el taller al que pertenece y no puede aplicarse.");
         }
 
         if (referenceId == null) {

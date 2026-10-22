@@ -5,6 +5,9 @@ import com.erp.integrationhub.application.dto.result.RucResult;
 import com.erp.integrationhub.application.usecase.ConsultarPlacaUseCase;
 import com.erp.integrationhub.application.usecase.ConsultarRucUseCase;
 import com.erp.integrationhub.interfaces.rest.advice.GlobalRestExceptionHandler;
+import com.erp.integrationhub.support.AuthenticatedUserContext;
+
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -34,7 +37,11 @@ class IdentityValidationControllerTest {
 
     @BeforeEach
     void setUp() {
-        IdentityValidationController controller = new IdentityValidationController(consultarRucUseCase, consultarPlacaUseCase);
+        IdentityValidationController controller = new IdentityValidationController(
+                consultarRucUseCase,
+                consultarPlacaUseCase,
+                new com.erp.integrationhub.infrastructure.security.TenantRateLimiter(60, 60));
+        AuthenticatedUserContext.asTenant(UUID.randomUUID());
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalRestExceptionHandler())
                 .build();

@@ -10,10 +10,13 @@ import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
+import com.erp.integrationhub.domain.port.UnitOfWork;
+import com.erp.integrationhub.domain.port.VoucherNumberingPort;
 import com.erp.integrationhub.domain.port.ValidadorIdentidadPort;
 import com.erp.integrationhub.domain.port.ValidadorVehicularPort;
 import com.erp.integrationhub.domain.port.IdentityCachePort;
 import com.erp.integrationhub.infrastructure.adapter.cache.RedisIdentityCacheAdapter;
+import com.erp.integrationhub.infrastructure.security.JwksKeyManager;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.erp.integrationhub.infrastructure.adapter.external.ApiSunatElectronicInvoicingAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.ChequeaPeRucValidationAdapter;
@@ -65,23 +68,20 @@ public class ApplicationServiceConfig {
     private boolean apiperuSandboxMode;
 
     @Bean
-    public EmisorTributarioPort emisorTributarioPort() {
-        return new ApiSunatElectronicInvoicingAdapter(apisunatBaseUrl, apisunatToken, apisunatSandboxMode);
+    public com.erp.integrationhub.domain.usecase.ReactivateRetryTaskUseCase reactivateRetryTaskUseCase(
+            RetryQueueRepositoryPort retryQueueRepositoryPort,
+            UnitOfWork unitOfWork) {
+        return new com.erp.integrationhub.application.service.RetryTaskReactivationService(
+                retryQueueRepositoryPort, unitOfWork);
     }
 
     @Bean
-    public PasarelaDePagoPort pasarelaDePagoPort() {
-        return new StripePaymentGatewayAdapter(stripeApiKey, stripeSandboxMode);
-    }
-
-    @Bean
-    public ValidadorIdentidadPort validadorIdentidadPort() {
-        return new ChequeaPeRucValidationAdapter(chequeaBaseUrl, chequeaToken, chequeaSandboxMode);
-    }
-
-    @Bean
-    public ValidadorVehicularPort validadorVehicularPort() {
-        return new SunarpVehicleValidationAdapter(apiperuBaseUrl, apiperuToken, apiperuSandboxMode);
+    public JwksKeyManager jwksKeyManager(
+            @Value("${erp.security.jwks-url:https://auth.erp-automotriz.com/.well-known/jwks.json}") String jwksUrl,
+            org.springframework.core.env.Environment environment) {
+        return new JwksKeyManager(
+                jwksUrl,
+                java.util.Arrays.asList(environment.getActiveProfiles()));
     }
 
     @Bean
@@ -89,16 +89,20 @@ public class ApplicationServiceConfig {
             EmisorTributarioPort emisorTributarioPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
-            RetryQueueRepositoryPort retryQueueRepositoryPort) {
-        return new ElectronicInvoicingService(emisorTributarioPort, idempotencyRepositoryPort, attemptRepositoryPort, retryQueueRepositoryPort);
+            RetryQueueRepositoryPort retryQueueRepositoryPort,
+            UnitOfWork unitOfWork,
+            VoucherNumberingPort voucherNumberingPort) {
+        return new ElectronicInvoicingService(emisorTributarioPort, idempotencyRepositoryPort, attemptRepositoryPort,
+                retryQueueRepositoryPort, unitOfWork, voucherNumberingPort);
     }
 
     @Bean
     public PaymentIntegrationService paymentIntegrationService(
             PasarelaDePagoPort pasarelaDePagoPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
-            IntegrationAttemptRepositoryPort attemptRepositoryPort) {
-        return new PaymentIntegrationService(pasarelaDePagoPort, idempotencyRepositoryPort, attemptRepositoryPort);
+            IntegrationAttemptRepositoryPort attemptRepositoryPort,
+            UnitOfWork unitOfWork) {
+        return new PaymentIntegrationService(pasarelaDePagoPort, idempotencyRepositoryPort, attemptRepositoryPort, unitOfWork);
     }
 
     @Bean
@@ -111,15 +115,22 @@ public class ApplicationServiceConfig {
             ValidadorIdentidadPort validadorIdentidadPort,
             ValidadorVehicularPort validadorVehicularPort,
             IdentityCachePort identityCachePort,
-            IntegrationAttemptRepositoryPort attemptRepositoryPort) {
-        return new IdentityValidationService(validadorIdentidadPort, validadorVehicularPort, identityCachePort, attemptRepositoryPort);
+            IntegrationAttemptRepositoryPort attemptRepositoryPort,
+            UnitOfWork unitOfWork) {
+        return new IdentityValidationService(validadorIdentidadPort, validadorVehicularPort, identityCachePort, attemptRepositoryPort, unitOfWork);
     }
 
     @Bean
     public WebhookProcessingService webhookProcessingService(
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
-            IdempotencyRepositoryPort idempotencyRepositoryPort) {
-        return new WebhookProcessingService(stripeWebhookSecret, apisunatToken, attemptRepositoryPort, idempotencyRepositoryPort);
+            IdempotencyRepositoryPort idempotencyRepositoryPort,
+            com.erp.integrationhub.domain.port.ProcessedWebhookRepositoryPort processedWebhookRepositoryPort,
+            @Value("${erp.integration.webhook.signing-secret:}") String webhookSigningSecret,
+            @Value("${erp.integration.webhook.window-seconds:300}") long ventanaTemporalSegundos,
+            UnitOfWork unitOfWork) {
+        return new WebhookProcessingService(stripeWebhookSecret, apisunatToken, attemptRepositoryPort,
+                idempotencyRepositoryPort, processedWebhookRepositoryPort, webhookSigningSecret,
+                ventanaTemporalSegundos, unitOfWork);
     }
 
     @Bean
@@ -128,7 +139,8 @@ public class ApplicationServiceConfig {
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
             EmisorTributarioPort emisorTributarioPort,
-            PasarelaDePagoPort pasarelaDePagoPort) {
-        return new RetrySchedulerService(retryQueueRepositoryPort, attemptRepositoryPort, idempotencyRepositoryPort, emisorTributarioPort, pasarelaDePagoPort);
+            PasarelaDePagoPort pasarelaDePagoPort,
+            UnitOfWork unitOfWork) {
+        return new RetrySchedulerService(retryQueueRepositoryPort, attemptRepositoryPort, idempotencyRepositoryPort, emisorTributarioPort, pasarelaDePagoPort, unitOfWork);
     }
 }

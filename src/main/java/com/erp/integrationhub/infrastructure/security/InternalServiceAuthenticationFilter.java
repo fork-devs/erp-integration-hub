@@ -22,7 +22,10 @@ import java.security.interfaces.RSAPublicKey;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -32,16 +35,54 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
     private static final long CLOCK_SKEW_TOLERANCE_MS = 60000; // 60s tolerancia de reloj
 
     private final String internalServiceKey;
+    private final java.util.Map<String, String> clavesPorServicio;
+    private final boolean claveCompartidaHabilitada;
     private final JwksKeyManager jwksKeyManager;
+    private final org.springframework.core.env.Environment environment;
 
-    public InternalServiceAuthenticationFilter(String internalServiceKey, JwksKeyManager jwksKeyManager) {
+    public InternalServiceAuthenticationFilter(
+            String internalServiceKey,
+            java.util.Map<String, String> clavesPorServicio,
+            boolean claveCompartidaHabilitada,
+            JwksKeyManager jwksKeyManager,
+            org.springframework.core.env.Environment environment) {
         String resolvedKey = SecretResolver.resolveSecret(internalServiceKey);
         this.internalServiceKey = (resolvedKey != null && !resolvedKey.isBlank()) ? resolvedKey.trim() : null;
+        this.clavesPorServicio = clavesPorServicio == null ? java.util.Map.of() : clavesPorServicio;
+        this.claveCompartidaHabilitada = claveCompartidaHabilitada;
         this.jwksKeyManager = jwksKeyManager;
+        this.environment = environment;
 
         if (this.internalServiceKey == null) {
             log.warn("ADVERTENCIA DE SEGURIDAD: INTERNAL_SERVICE_KEY no configurada. El bypass de servicios internos permanecerá deshabilitado.");
         }
+        if (this.claveCompartidaHabilitada) {
+            log.warn("ADVERTENCIA DE SEGURIDAD: la clave interna COMPARTIDA sigue habilitada. "
+                    + "Quien la posea puede declarar el nombre de otro servicio y heredar sus roles. "
+                    + "Debe desactivarse cuando todos los servicios usen su propia clave.");
+        }
+    }
+
+    /**
+     * Clave que se espera para el servicio que declara la peticion.
+     *
+     * <p>La clave es POR SERVICIO: cada servicio tiene la suya, y con ella no
+     * puede declarar el nombre de otro. Con una clave compartida, quien la
+     * posea puede declararse el servicio que quiera y heredar sus roles, de
+     * modo que el rol acotado no seria mas que decoracion.
+     *
+     * <p>La clave compartida solo se acepta mientras la ventana de
+     * compatibilidad siga abierta, y un servicio que ya tiene la suya usa la
+     * suya aunque la ventana siga abierta.
+     */
+    private String claveDe(String nombreServicio) {
+        if (nombreServicio != null && !nombreServicio.isBlank()) {
+            String propia = clavesPorServicio.get(nombreServicio.trim());
+            if (propia != null && !propia.isBlank()) {
+                return propia;
+            }
+        }
+        return claveCompartidaHabilitada ? internalServiceKey : null;
     }
 
     @Override
@@ -64,21 +105,39 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
         AuthenticatedUser authenticatedUser = null;
 
         // 1. Validar llamada interna de microservicio hermano con comparación timing-safe y principio de mínimo privilegio
-        if (internalKeyHeader != null && internalServiceKey != null) {
-            byte[] expectedBytes = internalServiceKey.getBytes(StandardCharsets.UTF_8);
+        String nombreServicioDeclarado = request.getHeader("X-Internal-Service-Name");
+        String claveEsperada = claveDe(nombreServicioDeclarado);
+
+        if (internalKeyHeader != null && claveEsperada != null) {
+            byte[] expectedBytes = claveEsperada.getBytes(StandardCharsets.UTF_8);
             byte[] actualBytes = internalKeyHeader.trim().getBytes(StandardCharsets.UTF_8);
             if (MessageDigest.isEqual(expectedBytes, actualBytes)) {
+                // La credencial compartida identifica al SERVICIO, no a un
+                // administrador de plataforma. Antes concedia tambien
+                // ROLE_ADMIN, con lo que podia listar los intentos y la cola
+                // de muertos de TODOS los talleres. El alcance transversal
+                // para operar sobre un taller concreto se mantiene, que es lo
+                // que el servicio necesita, pero la administracion de la
+                // plataforma queda reservada al superadministrador.
+                //
+                // Ademas, la identidad es POR SERVICIO: cada servicio
+                // recibe solo los roles que su configuracion le concede. Con
+                // un rol unico para todos, cualquier servicio con la
+                // credencial podia hacer lo que hiciera cualquier otro.
+                String nombreServicio = nombreServicioDeclarado;
                 authenticatedUser = new AuthenticatedUser(
                         UUID.randomUUID(),
                         null,
-                        "internal-service",
-                        Set.of("ROLE_INTERNAL_SERVICE", "ROLE_ADMIN"),
+                        nombreServicio != null && !nombreServicio.isBlank()
+                                ? nombreServicio.trim()
+                                : "internal-service",
+                        rolesDe(nombreServicio),
                         true
                 );
             }
         }
 
-        // 2. Validar Bearer JWT Token con verificación criptográfica RS256 contra JWKS
+    // 2. Validar Bearer JWT Token con verificación criptográfica RS256 contra JWKS
         if (authenticatedUser == null && authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7).trim();
             try {
@@ -154,6 +213,10 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
                     if (tenantClaim != null) tenantId = UUID.fromString(tenantClaim);
                 } catch (IllegalArgumentException ignored) {}
 
+                // El claim de roles es un ARRAY, con el mismo contrato que
+                // usa el gateway. Un token sin roles NO recibe un rol por
+                // defecto: conceder un privilegio que el token no declara
+                // es un bypass de autorizacion.
                 Set<String> roles = new HashSet<>();
                 Object rolesObj = claims.getClaim("roles");
                 if (rolesObj instanceof List<?> list) {
@@ -163,11 +226,12 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
                             roles.add(roleStr.startsWith("ROLE_") ? roleStr : "ROLE_" + roleStr);
                         }
                     }
-                } else if (claims.getStringClaim("role") != null) {
-                    String singleRole = claims.getStringClaim("role");
-                    roles.add(singleRole.startsWith("ROLE_") ? singleRole : "ROLE_" + singleRole);
-                } else {
-                    roles.add("ROLE_USER");
+                }
+
+                if (roles.isEmpty()) {
+                    sendErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED,
+                            "El token no declara ningun rol");
+                    return;
                 }
 
                 authenticatedUser = new AuthenticatedUser(userId, tenantId, sub, roles, false);
@@ -190,7 +254,7 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
         if (tenantIdHeader != null && !tenantIdHeader.isBlank()) {
             try {
                 UUID requestedTenantId = UUID.fromString(tenantIdHeader.trim());
-                if (!authenticatedUser.canAccessTenant(requestedTenantId)) {
+                if (!authenticatedUser.canOperateOnTenant(requestedTenantId)) {
                     log.warn("Violación de aislamiento multi-tenant: Usuario con tenant {} intentó acceder al tenant {}",
                             authenticatedUser.tenantId(), requestedTenantId);
                     sendErrorResponse(response, HttpServletResponse.SC_FORBIDDEN,
@@ -242,4 +306,30 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
         );
         response.getWriter().write(json);
     }
+
+    /**
+     * Roles concedidos al servicio que llama.
+     *
+     * <p>Se configuran por servicio: {@code erp.security.internal-service.roles.<servicio>}. Un
+     * servicio sin configuracion recibe solo el rol transversal minimo.
+     */
+    private Set<String> rolesDe(String nombreServicio) {
+        if (nombreServicio == null || nombreServicio.isBlank()) {
+            return Set.of("ROLE_INTERNAL_SERVICE");
+        }
+        String clave = "erp.security.internal-service.roles." + nombreServicio.trim();
+        String configuracion = environment.getProperty(clave);
+        if (configuracion == null || configuracion.isBlank()) {
+            log.warn("El servicio interno {} no tiene roles configurados: recibe solo el rol transversal",
+                    nombreServicio);
+            return Set.of("ROLE_INTERNAL_SERVICE");
+        }
+        Set<String> roles = Arrays.stream(configuracion.split(","))
+                .map(String::trim)
+                .filter(rol -> !rol.isEmpty())
+                .map(rol -> rol.startsWith("ROLE_") ? rol : "ROLE_" + rol)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        return roles.isEmpty() ? Set.of("ROLE_INTERNAL_SERVICE") : roles;
+    }
+
 }

@@ -39,22 +39,6 @@ public class ChequeaPeRucValidationAdapter implements ValidadorIdentidadPort {
         }
 
         // Modo sandbox si la credencial es de prueba o mock
-        if (sandboxMode && (token.contains("mock") || token.contains("sandbox") || token.isBlank())) {
-            String razonSocial = ruc.startsWith("20") ? "SERVICIOS AUTOMOTRICES LIMA S.A.C." : "JUAN CARLOS PEREZ GOMEZ";
-            return new ConsultaRucResult(
-                    ruc,
-                    razonSocial,
-                    "ACTIVO",
-                    "HABIDO",
-                    "AV. JAVIER PRADO ESTE 1234, SAN ISIDRO",
-                    "LIMA",
-                    "LIMA",
-                    "SAN ISIDRO",
-                    "150131",
-                    true
-            );
-        }
-
         // Llamada HTTP Real al API de Chequea.pe
         try {
             String targetUrl = baseUrl.endsWith("/") ? baseUrl + "ruc/" + ruc : baseUrl + "/ruc/" + ruc;

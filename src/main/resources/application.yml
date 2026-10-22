@@ -9,8 +9,10 @@ spring:
 
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5434/erp_integration_db}
-    username: ${SPRING_DATASOURCE_USERNAME:integration_user}
-    password: ${SPRING_DATASOURCE_PASSWORD:integration_secret}
+    # Rol de EJECUCION: sin privilegios de propietario y con NOBYPASSRLS, de
+    # modo que la politica de Row-Level Security le sea aplicable.
+    username: ${ERP_APP_DB_USER:erp_app}
+    password: ${ERP_APP_DB_PASSWORD:erp_app_local_password}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10
@@ -31,7 +33,15 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
-    baseline-on-migrate: true
+    # El servicio es dueno de su esquema: marcar como baseline una base ya
+    # existente haria que las migraciones no se ejecutaran.
+    baseline-on-migrate: false
+    # Rol de MIGRACION: el propietario, que necesita permisos de DDL.
+    user: ${SPRING_FLYWAY_USER:integration_user}
+    password: ${SPRING_FLYWAY_PASSWORD:integration_secret}
+    placeholders:
+      appRolePassword: ${ERP_APP_DB_PASSWORD:erp_app_local_password}
+      platformRolePassword: ${ERP_PLATFORM_ROLE_PASSWORD:erp_platform_local_password}
 
   data:
     redis:
@@ -42,9 +52,47 @@ spring:
 
 erp:
   security:
+    # Credencial de los llamadores internos. Se sustituye por una clave POR
+    # SERVICIO: la compartida se conserva solo durante la ventana de
+    # compatibilidad, y se desactiva cuando todos los servicios usen la suya.
     internal-service-key: ${INTERNAL_SERVICE_KEY:}
-    jwks-url: ${JWKS_URL:http://localhost:8081/.well-known/jwks.json}
+    # Ventana de compatibilidad de la clave compartida. Con ella abierta,
+    # quien posea la clave compartida puede declarar el nombre de otro
+    # servicio y heredar sus roles.
+    shared-key-enabled: ${INTERNAL_SERVICE_SHARED_KEY_ENABLED:false}
+    # Clave propia de cada servicio que llama al hub:
+    #   erp.security.internal-service.keys.<servicio>=<clave>
+    # El rol que recibe cada uno es el de
+    #   erp.security.internal-service.roles.<servicio>
+    keys:
+      erp-fleet-service: ${INTEGRATION_HUB_KEY_FLEET:}
+    roles:
+      # fleet valida identidad y vehiculo contra el hub: el rol es acotado a
+      # esa operacion, y no alcanza las operaciones administrativas.
+      erp-fleet-service: ROLE_FLEET
+    platform-role:
+      # Rol con BYPASSRLS, usado EXCLUSIVAMENTE por el relay de reintentos
+      # para recorrer la cola de todos los talleres.
+      user: ${ERP_PLATFORM_ROLE_USER:erp_platform}
+      password: ${ERP_PLATFORM_ROLE_PASSWORD:erp_platform_local_password}
+    # La URL del conjunto de claves debe usar un esquema cifrado. El arranque
+    # falla de forma explicita si no lo hace, y la unica excepcion es el
+    # perfil de desarrollo local (application-dev.yml).
+    jwks-url: ${JWKS_URL:https://auth.erp-automotriz.com/.well-known/jwks.json}
+  webhook:
+    # Clave de firma de los avisos, PROPIA y distinta de la credencial de
+    # acceso al proveedor: con la misma clave, quien tiene la credencial del
+    # proveedor podria fabricar avisos.
+    signing-secret: ${WEBHOOK_SIGNING_SECRET:}
+    # Ventana temporal admitida para un aviso, en segundos. Un aviso fuera de
+    # la ventana se rechaza: su firma es valida, pero el aviso es viejo.
+    window-seconds: ${WEBHOOK_WINDOW_SECONDS:300}
   integration:
+    # Adaptadores de proveedor SIMULADOS. Solo admisibles en un perfil de
+    # desarrollo: fuera de el, el arranque falla de forma explicita. Un
+    # adaptador simulado fabrica respuestas que no corresponden a ningun
+    # proveedor real.
+    simulated-adapters: ${SIMULATED_ADAPTERS:false}
     apisunat:
       base-url: ${APISUNAT_BASE_URL:https://sandbox.apisunat.pe}
       token: ${APISUNAT_TOKEN:sandbox_token_apisunat}

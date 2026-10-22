@@ -17,6 +17,7 @@ import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
+import com.erp.integrationhub.domain.port.UnitOfWork;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,6 +28,12 @@ import java.util.stream.Collectors;
 
 public class RetrySchedulerService implements ProcessRetryQueueUseCase {
 
+    /**
+     * Numero maximo de intentos de una operacion encolada. Con la escala de
+     * esperas por defecto, siete intentos cubren una ventana de unas 24 horas.
+     */
+    public static final int MAX_INTENTOS_REINTENTO = 7;
+
     private static final Logger log = LoggerFactory.getLogger(RetrySchedulerService.class);
 
     private final RetryQueueRepositoryPort retryQueueRepositoryPort;
@@ -35,19 +42,22 @@ public class RetrySchedulerService implements ProcessRetryQueueUseCase {
     private final EmisorTributarioPort emisorTributarioPort;
     private final PasarelaDePagoPort pasarelaDePagoPort;
     private final ObjectMapper objectMapper;
+    private final UnitOfWork unitOfWork;
 
     public RetrySchedulerService(
             RetryQueueRepositoryPort retryQueueRepositoryPort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
             EmisorTributarioPort emisorTributarioPort,
-            PasarelaDePagoPort pasarelaDePagoPort) {
+            PasarelaDePagoPort pasarelaDePagoPort,
+            UnitOfWork unitOfWork) {
         this.retryQueueRepositoryPort = retryQueueRepositoryPort;
         this.attemptRepositoryPort = attemptRepositoryPort;
         this.idempotencyRepositoryPort = idempotencyRepositoryPort;
         this.emisorTributarioPort = emisorTributarioPort;
         this.pasarelaDePagoPort = pasarelaDePagoPort;
         this.objectMapper = new ObjectMapper().findAndRegisterModules();
+        this.unitOfWork = unitOfWork;
     }
 
     @Override
@@ -66,28 +76,76 @@ public class RetrySchedulerService implements ProcessRetryQueueUseCase {
                     executePaymentRetry(task);
                 } else {
                     log.warn("Operación desconocida en tarea de reintento: {}", task.getOperation());
-                    task.markCompleted();
-                    retryQueueRepositoryPort.save(task);
+                    unitOfWork.runInTransaction(() -> {
+                        task.markCompleted();
+                        retryQueueRepositoryPort.save(task);
+                    });
                 }
 
                 processed++;
             } catch (Exception e) {
                 log.warn("Fallo al reintentar tarea {}: {}", task.getId(), e.getMessage());
-                task.recordFailure(e.getMessage());
-                retryQueueRepositoryPort.save(task);
+                unitOfWork.runInTransaction(() -> {
+                    task.recordFailure(e.getMessage());
+                    retryQueueRepositoryPort.save(task);
 
-                attemptRepositoryPort.save(IntegrationAttempt.retry(
-                        task.getTenantId(),
-                        task.getProvider(),
-                        task.getOperation(),
-                        task.getReferenceId(),
-                        task.getAttemptsCount(),
-                        e.getMessage()
-                ));
+                    // Cuando la tarea agota sus intentos, el estado de
+                    // AGOTADO queda en la bitacora de intentos. Sin el, la
+                    // profundidad de la cola de muertos no es consultable: la
+                    // bitacora solo dira que hubo un fallo mas.
+                    boolean agotada = "DLQ".equals(task.getStatus());
+                    IntegrationAttempt intento = agotada
+                            ? IntegrationAttempt.dlq(
+                                    task.getTenantId(),
+                                    task.getProvider(),
+                                    task.getOperation(),
+                                    task.getReferenceId(),
+                                    task.getAttemptsCount(),
+                                    e.getMessage())
+                            : IntegrationAttempt.retry(
+                                    task.getTenantId(),
+                                    task.getProvider(),
+                                    task.getOperation(),
+                                    task.getReferenceId(),
+                                    task.getAttemptsCount(),
+                                    e.getMessage()
+                            );
+
+                    // El relay registra el intento de una operacion de un
+                    // taller que no es el suyo: la escritura va con el rol de
+                    // plataforma, o violaria la politica de aislamiento.
+                    if (attemptRepositoryPort instanceof com.erp.integrationhub.infrastructure.persistence.adapter
+                            .IntegrationAttemptPersistenceAdapter adapter) {
+                        adapter.saveWithPlatformScope(intento);
+                    } else {
+                        attemptRepositoryPort.save(intento);
+                    }
+                });
             }
         }
 
         return processed;
+    }
+
+    /**
+     * Escribe el resultado en el registro de idempotencia, por su clave de
+     * negocio. Si la fila no existe, la reclama antes: es la primera vez que
+     * se registra ese resultado.
+     */
+    private void actualizarIdempotencia(EmitirComprobanteCommand cmd, String payload) {
+        String clave = cmd.idempotencyKey() != null ? cmd.idempotencyKey() : cmd.comprobanteId().toString();
+        IdempotencyRecord existente = idempotencyRepositoryPort
+                .findByTenantAndScopeAndKey(cmd.tenantId(), IdempotencyScope.VOUCHER, clave)
+                .orElse(null);
+        if (existente != null) {
+            idempotencyRepositoryPort.updateByKey(cmd.tenantId(), IdempotencyScope.VOUCHER, clave,
+                    existente.completed(payload, null));
+            return;
+        }
+        IdempotencyRecord claimado = idempotencyRepositoryPort
+                .claim(cmd.tenantId(), IdempotencyScope.VOUCHER, clave, null);
+        idempotencyRepositoryPort.updateByKey(cmd.tenantId(), IdempotencyScope.VOUCHER, clave,
+                claimado.completed(payload, null));
     }
 
     private void executeVoucherRetry(RetryTask task) throws Exception {
@@ -129,31 +187,105 @@ public class RetrySchedulerService implements ProcessRetryQueueUseCase {
 
         ResultadoDeclaracion resultado = emisorTributarioPort.emitirComprobante(comprobante);
 
-        if (resultado.exitoso()) {
+        if (!resultado.exitoso()) {
+            // El proveedor NO emito el comprobante: reintentar es seguro.
+            throw new RuntimeException("Respuesta no exitosa de APISUNAT/SUNAT: " + resultado.mensajeSunat());
+        }
+
+        // El proveedor YA emitio el comprobante. A partir de aqui no se
+        // puede reenviar: una segunda emision seria un comprobante
+        // duplicado, que es un problema mucho mayor que un registro local
+        // que falta.
+        //
+        // El estado de la tarea y el registro de idempotencia se confirman
+        // juntos: antes, un fallo al escribir la idempotencia dejaba la
+        // tarea sin marcar, y el planificador la reprogramaba para reenviar
+        // el comprobante a SUNAT, que ya lo habia emitido.
+        // Actualizar el registro de idempotencia con los datos reales de SUNAT (Issue 2 resuelto)
+        ComprobanteResult finalResult = new ComprobanteResult(
+                cmd.comprobanteId(),
+                true,
+                resultado.estadoSunat(),
+                resultado.codigoRespuestaSunat(),
+                resultado.mensajeSunat(),
+                resultado.pdfUrl(),
+                resultado.xmlUrl(),
+                resultado.cdrUrl(),
+                resultado.hashCdr(),
+                false
+        );
+
+        // El payload se serializa antes del limite transaccional: la lambda
+        // no puede propagar una excepcion comprobada, y un fallo de
+        // serializacion no debe confundirse con un fallo de persistencia.
+        final String idempotencyPayload;
+        try {
+            idempotencyPayload = objectMapper.writeValueAsString(finalResult);
+        } catch (Exception e) {
+            throw new RuntimeException("No se pudo serializar el resultado del comprobante", e);
+        }
+
+        try {
+            unitOfWork.runInTransaction(() -> {
+                task.markCompleted();
+                retryQueueRepositoryPort.save(task);
+
+                // La actualizacion va por la clave de negocio: el resultado
+                // llega a la fila que ya existe, y no se inserta una nueva.
+                // Si la fila no existe, se reclama: es la primera vez que se
+                // registra ese resultado.
+                try {
+                    actualizarIdempotencia(cmd, idempotencyPayload);
+                } catch (RuntimeException e) {
+                    // El comprobante YA se emitio, y eso esta registrado en
+                    // la tarea y en el intento. La cache de idempotencia es
+                    // una comodidad: que su escritura falle no puede
+                    // convertir un reintento EXITOSO en un fallo, ni
+                    // reprogramar la emision de un comprobante que SUNAT ya
+                    // acepto.
+                    log.error("No se pudo actualizar el registro de idempotencia del comprobante {}: {}",
+                            cmd.comprobanteId(), e.getMessage(), e);
+                }
+
+                attemptRepositoryPort.save(IntegrationAttempt.ok(
+                        task.getTenantId(),
+                        task.getProvider(),
+                        task.getOperation(),
+                        task.getReferenceId(),
+                        task.getAttemptsCount() + 1
+                ));
+            });
+        } catch (Exception e) {
+            // El comprobante existe en SUNAT, pero no se pudo registrar aqui.
+            // La tarea pasa a la cola de muertos, que es terminal: NO se
+            // reprograma, de modo que el comprobante no se reenvia. La falta
+            // del registro queda como evidencia operativa, que exige
+            // atencion manual, y no como un motivo para duplicar el
+            // comprobante.
+            log.error("El comprobante {} fue emitido por el proveedor pero no se pudo registrar localmente: {}",
+                    cmd.comprobanteId(), e.getMessage());
+
+            unitOfWork.runInTransaction(() -> {
+                task.markDeadLetter("Comprobante emitido por el proveedor, pero no se pudo registrar localmente: "
+                        + e.getMessage());
+                retryQueueRepositoryPort.save(task);
+
+                attemptRepositoryPort.save(IntegrationAttempt.retry(
+                        task.getTenantId(),
+                        task.getProvider(),
+                        task.getOperation(),
+                        task.getReferenceId(),
+                        task.getAttemptsCount() + 1,
+                        "Comprobante emitido por el proveedor, pero no se pudo registrar localmente: " + e.getMessage()
+                ));
+            });
+        }
+    }
+
+    private void executePaymentRetry(RetryTask task) {
+        unitOfWork.runInTransaction(() -> {
             task.markCompleted();
             retryQueueRepositoryPort.save(task);
-
-            // Actualizar el registro de idempotencia con los datos reales de SUNAT (Issue 2 resuelto)
-            ComprobanteResult finalResult = new ComprobanteResult(
-                    cmd.comprobanteId(),
-                    true,
-                    resultado.estadoSunat(),
-                    resultado.codigoRespuestaSunat(),
-                    resultado.mensajeSunat(),
-                    resultado.pdfUrl(),
-                    resultado.xmlUrl(),
-                    resultado.cdrUrl(),
-                    resultado.hashCdr(),
-                    false
-            );
-
-            idempotencyRepositoryPort.save(IdempotencyRecord.of(
-                    cmd.tenantId(),
-                    IdempotencyScope.VOUCHER,
-                    cmd.idempotencyKey() != null ? cmd.idempotencyKey() : cmd.comprobanteId().toString(),
-                    objectMapper.writeValueAsString(finalResult)
-            ));
-
             attemptRepositoryPort.save(IntegrationAttempt.ok(
                     task.getTenantId(),
                     task.getProvider(),
@@ -161,20 +293,6 @@ public class RetrySchedulerService implements ProcessRetryQueueUseCase {
                     task.getReferenceId(),
                     task.getAttemptsCount() + 1
             ));
-        } else {
-            throw new RuntimeException("Respuesta no exitosa de APISUNAT/SUNAT: " + resultado.mensajeSunat());
-        }
-    }
-
-    private void executePaymentRetry(RetryTask task) {
-        task.markCompleted();
-        retryQueueRepositoryPort.save(task);
-        attemptRepositoryPort.save(IntegrationAttempt.ok(
-                task.getTenantId(),
-                task.getProvider(),
-                task.getOperation(),
-                task.getReferenceId(),
-                task.getAttemptsCount() + 1
-        ));
+        });
     }
 }

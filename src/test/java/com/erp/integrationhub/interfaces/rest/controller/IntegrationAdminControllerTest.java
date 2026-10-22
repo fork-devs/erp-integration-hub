@@ -47,9 +47,13 @@ class IntegrationAdminControllerTest {
     @Mock
     private ProcessRetryQueueUseCase processRetryQueueUseCase;
 
+    @Mock
+    private com.erp.integrationhub.domain.usecase.ReactivateRetryTaskUseCase reactivateUseCase;
+
     @BeforeEach
     void setUp() {
         IntegrationAdminController controller = new IntegrationAdminController(
+                reactivateUseCase,
                 attemptRepositoryPort,
                 retryQueueRepositoryPort,
                 processRetryQueueUseCase

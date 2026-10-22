@@ -13,6 +13,7 @@ import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import com.erp.integrationhub.support.DirectUnitOfWork;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -27,6 +28,8 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -54,12 +57,23 @@ class RetrySchedulerServiceTest {
 
     @BeforeEach
     void setUp() {
+        // La clave de idempotencia se reclama y despues se actualiza por su
+        // clave de negocio. Los dobles son lenient: no todos los tests
+        // llegan a la reclamacion.
+        lenient().when(idempotencyRepositoryPort.findByTenantAndScopeAndKey(any(), any(), any()))
+                .thenReturn(java.util.Optional.empty());
+        lenient().when(idempotencyRepositoryPort.claim(any(), any(), any(), any()))
+                .thenReturn(com.erp.integrationhub.domain.model.IdempotencyRecord.claiming(
+                        java.util.UUID.randomUUID(),
+                        com.erp.integrationhub.domain.model.IdempotencyScope.VOUCHER,
+                        "clave", "huella"));
         retrySchedulerService = new RetrySchedulerService(
                 retryQueueRepositoryPort,
                 attemptRepositoryPort,
                 idempotencyRepositoryPort,
                 emisorTributarioPort,
-                pasarelaDePagoPort
+                pasarelaDePagoPort,
+                DirectUnitOfWork.INSTANCE
         );
     }
 
@@ -105,7 +119,10 @@ class RetrySchedulerServiceTest {
         assertEquals("COMPLETED", task2.getStatus());
 
         verify(emisorTributarioPort).emitirComprobante(any());
-        verify(idempotencyRepositoryPort).save(any());
+        // El resultado se escribe por la clave de negocio, sobre la fila
+        // reclamada: no se inserta una fila nueva.
+        verify(idempotencyRepositoryPort).updateByKey(any(), any(), any(), any());
+        verify(idempotencyRepositoryPort, never()).save(any());
         verify(retryQueueRepositoryPort, times(2)).save(any());
         verify(attemptRepositoryPort, times(2)).save(any());
     }

@@ -3,10 +3,12 @@ package com.erp.integrationhub.interfaces.rest.controller;
 import com.erp.integrationhub.application.usecase.ProcessRetryQueueUseCase;
 import com.erp.integrationhub.domain.model.AttemptStatus;
 import com.erp.integrationhub.domain.model.IntegrationAttempt;
+import com.erp.integrationhub.domain.usecase.ReactivateRetryTaskUseCase;
 import com.erp.integrationhub.domain.model.RetryTask;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
 import com.erp.integrationhub.infrastructure.security.AuthenticatedUser;
+import com.erp.integrationhub.interfaces.rest.support.TenantContextScope;
 import com.erp.integrationhub.interfaces.rest.response.IntegrationAttemptResponse;
 import com.erp.integrationhub.interfaces.rest.response.RetryTaskResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -17,6 +19,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -33,6 +36,9 @@ import java.util.UUID;
 @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
 public class IntegrationAdminController {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(IntegrationAdminController.class);
+
     private static final int MAX_LIMIT = 100;
     private static final int DEFAULT_LIMIT = 50;
 
@@ -40,13 +46,17 @@ public class IntegrationAdminController {
     private final RetryQueueRepositoryPort retryQueueRepositoryPort;
     private final ProcessRetryQueueUseCase processRetryQueueUseCase;
 
+    private final ReactivateRetryTaskUseCase reactivateRetryTaskUseCase;
+
     public IntegrationAdminController(
+            ReactivateRetryTaskUseCase reactivateRetryTaskUseCase,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             RetryQueueRepositoryPort retryQueueRepositoryPort,
             ProcessRetryQueueUseCase processRetryQueueUseCase) {
         this.attemptRepositoryPort = attemptRepositoryPort;
         this.retryQueueRepositoryPort = retryQueueRepositoryPort;
         this.processRetryQueueUseCase = processRetryQueueUseCase;
+        this.reactivateRetryTaskUseCase = reactivateRetryTaskUseCase;
     }
 
     @GetMapping("/attempts")
@@ -66,27 +76,33 @@ public class IntegrationAdminController {
         }
 
         // Validación estricta de acceso al tenant: usuarios regulares/tenant admins no pueden consultar globalmente
-        if (tenantId == null && (authUser == null || (!authUser.isInternalService() && !authUser.isSuperAdmin()))) {
+        // Sin taller, solo quien tiene alcance transversal puede consultar en
+        // global. La credencial compartida de servicio interno ya no concede
+        // este alcance: es una credencial de servicio, no de administracion de
+        // plataforma.
+        if (tenantId == null && (authUser == null || !authUser.isSuperAdmin())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
-        if (tenantId != null && authUser != null && !authUser.canAccessTenant(tenantId)) {
+        if (tenantId != null && authUser != null && !authUser.canOperateOnTenant(tenantId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
+
+        final UUID tallerEfectivo = tenantId;
 
         int effectiveLimit = Math.max(1, Math.min(limit, MAX_LIMIT));
 
         List<IntegrationAttempt> attempts;
         if (tenantId != null) {
             if (referenceId != null) {
-                attempts = attemptRepositoryPort.findByTenantIdAndReferenceId(tenantId, referenceId);
+                attempts = enContextoDeTaller(tallerEfectivo, () -> attemptRepositoryPort.findByTenantIdAndReferenceId(tallerEfectivo, referenceId));
             } else {
-                attempts = attemptRepositoryPort.findByTenantId(tenantId, effectiveLimit);
+                attempts = enContextoDeTaller(tallerEfectivo, () -> attemptRepositoryPort.findByTenantId(tallerEfectivo, effectiveLimit));
             }
         } else if (status != null) {
-            attempts = attemptRepositoryPort.findByStatus(status, effectiveLimit);
+            attempts = enContextoDeTaller(tallerEfectivo, () -> attemptRepositoryPort.findByTenantIdAndStatus(tallerEfectivo, status, effectiveLimit));
         } else {
-            attempts = attemptRepositoryPort.findByStatus(AttemptStatus.OK, effectiveLimit);
+            attempts = enContextoDeTaller(tallerEfectivo, () -> attemptRepositoryPort.findByTenantIdAndStatus(tallerEfectivo, AttemptStatus.OK, effectiveLimit));
         }
 
         List<IntegrationAttemptResponse> response = attempts.stream()
@@ -104,18 +120,25 @@ public class IntegrationAdminController {
             @RequestParam(value = "limit", defaultValue = "50") int limit) {
 
         AuthenticatedUser authUser = getAuthenticatedUser();
+        registrarOperacion("consultar_cola_de_muertos", authUser, tenantId);
 
         if (tenantId == null && authUser != null && authUser.tenantId() != null) {
             tenantId = authUser.tenantId();
         }
 
-        if (tenantId == null && (authUser == null || (!authUser.isInternalService() && !authUser.isSuperAdmin()))) {
+        // Sin taller, solo quien tiene alcance transversal puede consultar en
+        // global. La credencial compartida de servicio interno ya no concede
+        // este alcance: es una credencial de servicio, no de administracion de
+        // plataforma.
+        if (tenantId == null && (authUser == null || !authUser.isSuperAdmin())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
-        if (tenantId != null && authUser != null && !authUser.canAccessTenant(tenantId)) {
+        if (tenantId != null && authUser != null && !authUser.canOperateOnTenant(tenantId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
+
+        final UUID tallerEfectivo = tenantId;
 
         if (tenantId == null) {
             return ResponseEntity.badRequest().build();
@@ -123,12 +146,25 @@ public class IntegrationAdminController {
 
         int effectiveLimit = Math.max(1, Math.min(limit, MAX_LIMIT));
 
-        List<RetryTask> tasks = retryQueueRepositoryPort.findDlqTasks(tenantId, effectiveLimit);
+        List<RetryTask> tasks = enContextoDeTaller(tallerEfectivo, () -> retryQueueRepositoryPort.findDlqTasks(tallerEfectivo, effectiveLimit));
         List<RetryTaskResponse> response = tasks.stream()
                 .map(RetryTaskResponse::fromDomain)
                 .toList();
 
         return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/dlq/{id}/reactivate")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
+    @Operation(summary = "Reactivar una tarea en cola de muertos",
+            description = "Devuelve la tarea a la cola de pendientes con el contador de intentos restablecido")
+    public ResponseEntity<Map<String, Object>> reactivateTask(@PathVariable UUID id) {
+        RetryTask task = reactivateRetryTaskUseCase.reactivate(id);
+        return ResponseEntity.ok(Map.of(
+                "id", task.getId().toString(),
+                "status", task.getStatus(),
+                "attempts", task.getAttemptsCount(),
+                "nextRetryAt", String.valueOf(task.getNextRetryAt())));
     }
 
     @PostMapping("/retry/trigger")
@@ -145,6 +181,33 @@ public class IntegrationAdminController {
                 "message", "Retry processing cycle executed successfully",
                 "processedTasks", processed
         ));
+    }
+
+    /**
+     * Ejecuta la operacion con el contexto de taller establecido, de modo que
+     * la politica de Row-Level Security filtre por el taller del principal.
+     */
+    private <T> T enContextoDeTaller(UUID tenantId, java.util.function.Supplier<T> operacion) {
+        if (tenantId == null) {
+            return operacion.get();
+        }
+        try (TenantContextScope scope = TenantContextScope.forTenant(tenantId)) {
+            return operacion.get();
+        }
+    }
+
+    /**
+     * Registra QUIEN ejecuta una operacion de administracion.
+     *
+     * <p>Con la identidad por servicio, la bitacora dice que servicio lo
+     * hizo, y no solo que se uso la credencial compartida.
+     */
+    private void registrarOperacion(String operacion, AuthenticatedUser authUser, UUID tenantId) {
+        String identidad = authUser != null && authUser.username() != null
+                ? authUser.username()
+                : "desconocida";
+        log.info("Operacion de administracion {} ejecutada por {} sobre el taller {}",
+                operacion, identidad, tenantId);
     }
 
     private AuthenticatedUser getAuthenticatedUser() {

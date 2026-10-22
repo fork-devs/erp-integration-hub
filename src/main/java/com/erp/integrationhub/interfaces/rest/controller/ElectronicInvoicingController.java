@@ -8,10 +8,14 @@ import com.erp.integrationhub.interfaces.rest.request.AnularComprobanteRequest;
 import com.erp.integrationhub.interfaces.rest.request.ConsultarEstadoComprobanteRequest;
 import com.erp.integrationhub.interfaces.rest.request.EmitirComprobanteRequest;
 import com.erp.integrationhub.interfaces.rest.response.ComprobanteResponse;
+import com.erp.integrationhub.interfaces.rest.support.AuthenticatedUserHolder;
+import com.erp.integrationhub.interfaces.rest.support.TenantContextScope;
+import com.erp.integrationhub.interfaces.rest.support.TenantResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -34,11 +38,18 @@ public class ElectronicInvoicingController {
     }
 
     @PostMapping("/emit")
+    /**
+     * Emitir un comprobante tiene efectos fiscales: solo lo ejecutan los roles
+     * de administracion y los servicios internos.
+     */
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'ADMIN_TALLER', 'SUPERADMIN', 'INTERNAL_SERVICE')")
     @Operation(summary = "Emit electronic invoice/boleta to SUNAT via APISUNAT", description = "Submits invoice to SUNAT with deterministic idempotency guarantee and automatic outbox retry on failure")
     public ResponseEntity<ComprobanteResponse> emitInvoice(
-            @RequestHeader("X-Tenant-ID") UUID tenantId,
+            @RequestHeader(value = "X-Tenant-ID", required = false) UUID requestedTenantId,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyHeader,
             @Valid @RequestBody EmitirComprobanteRequest request) {
+
+        UUID tenantId = TenantResolver.resolveForOperation(requestedTenantId, AuthenticatedUserHolder.current());
 
         String effectiveIdempotencyKey;
         if (idempotencyHeader != null && !idempotencyHeader.isBlank()) {
@@ -91,11 +102,12 @@ public class ElectronicInvoicingController {
                 effectiveIdempotencyKey
         );
 
-        ComprobanteResult result = emitirComprobanteUseCase.emitirComprobante(command);
+        ComprobanteResult result = enContextoDeTaller(tenantId, () -> emitirComprobanteUseCase.emitirComprobante(command));
         return ResponseEntity.ok(ComprobanteResponse.fromResult(result));
     }
 
     @PostMapping("/void")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'ADMIN_TALLER', 'SUPERADMIN', 'INTERNAL_SERVICE')")
     @Operation(summary = "Void/cancel electronic invoice, note or boleta via APISUNAT", description = "Dispatches communication of voiding (/api/v3/voided) or daily summary (/api/v3/daily-summary) to SUNAT")
     public ResponseEntity<ComprobanteResponse> voidInvoice(
             @RequestHeader("X-Tenant-ID") UUID tenantId,
@@ -105,34 +117,49 @@ public class ElectronicInvoicingController {
                 ? request.comprobanteId()
                 : UUID.nameUUIDFromBytes(("void:" + tenantId + ":" + request.tipo() + ":" + request.serie() + ":" + request.numero()).getBytes(StandardCharsets.UTF_8));
 
-        ComprobanteResult result = emitirComprobanteUseCase.anularComprobante(
+        ComprobanteResult result = enContextoDeTaller(tenantId, () -> emitirComprobanteUseCase.anularComprobante(
                 tenantId,
                 compId,
                 request.tipo(),
                 request.serie(),
                 request.numero(),
                 request.motivo()
-        );
+        ));
         return ResponseEntity.ok(ComprobanteResponse.fromResult(result));
     }
 
     @PostMapping("/status")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'ADMIN_TALLER', 'SUPERADMIN', 'ASESOR', 'MECANICO', 'INTERNAL_SERVICE')")
     @Operation(summary = "Query document status in SUNAT via APISUNAT", description = "Retrieves current status, hash, XML, CDR, and PDF links (/api/v3/status)")
     public ResponseEntity<ComprobanteResponse> checkStatus(
-            @RequestHeader("X-Tenant-ID") UUID tenantId,
+            @RequestHeader(value = "X-Tenant-ID", required = false) UUID requestedTenantId,
             @Valid @RequestBody ConsultarEstadoComprobanteRequest request) {
+
+        UUID tenantId = TenantResolver.resolveForOperation(requestedTenantId, AuthenticatedUserHolder.current());
 
         UUID compId = request.comprobanteId() != null
                 ? request.comprobanteId()
                 : UUID.nameUUIDFromBytes(("status:" + tenantId + ":" + request.tipo() + ":" + request.serie() + ":" + request.numero()).getBytes(StandardCharsets.UTF_8));
 
-        ComprobanteResult result = emitirComprobanteUseCase.consultarEstadoComprobante(
+        ComprobanteResult result = enContextoDeTaller(tenantId, () -> emitirComprobanteUseCase.consultarEstadoComprobante(
                 tenantId,
                 compId,
                 request.tipo(),
                 request.serie(),
                 request.numero()
-        );
+        ));
         return ResponseEntity.ok(ComprobanteResponse.fromResult(result));
     }
+
+    /**
+     * Ejecuta la operacion con el contexto de taller establecido, de modo que
+     * la politica de Row-Level Security filtre por el taller del principal y
+     * no por el de la fila.
+     */
+    private <T> T enContextoDeTaller(UUID tenantId, java.util.function.Supplier<T> operacion) {
+        try (TenantContextScope scope = TenantContextScope.forTenant(tenantId)) {
+            return operacion.get();
+        }
+    }
+
 }

@@ -3,6 +3,7 @@ package com.erp.integrationhub.interfaces.rest.controller;
 import com.erp.integrationhub.application.dto.result.PagoResult;
 import com.erp.integrationhub.application.usecase.ProcesarPagoUseCase;
 import com.erp.integrationhub.interfaces.rest.advice.GlobalRestExceptionHandler;
+import com.erp.integrationhub.support.AuthenticatedUserContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -32,6 +33,7 @@ class PaymentIntegrationControllerTest {
     @BeforeEach
     void setUp() {
         PaymentIntegrationController controller = new PaymentIntegrationController(procesarPagoUseCase);
+        AuthenticatedUserContext.asTenant(UUID.randomUUID());
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalRestExceptionHandler())
                 .build();
@@ -41,6 +43,7 @@ class PaymentIntegrationControllerTest {
     @DisplayName("POST /api/v1/integrations/payments/charge - Should return 200 OK with charge result")
     void processCharge_WhenValidRequest_ShouldReturn200() throws Exception {
         UUID tenantId = UUID.randomUUID();
+        AuthenticatedUserContext.asTenant(tenantId);
         UUID paymentId = UUID.randomUUID();
 
         PagoResult result = new PagoResult(

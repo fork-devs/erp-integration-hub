@@ -21,11 +21,27 @@ public class SecurityConfig {
     @Value("${erp.security.internal-service-key:}")
     private String internalServiceKey;
 
+    @Value("${erp.security.internal-service.shared-key-enabled:false}")
+    private boolean claveCompartidaHabilitada;
+
+    /**
+     * Clave POR SERVICIO de los llamadores internos.
+     *
+     * <p>Con una clave compartida, quien la posea puede declarar el nombre de
+     * otro servicio y heredar sus roles: el rol acotado no seria mas que
+     * decoracion. Cada servicio tiene la suya, y la ventana de compatibilidad
+     * de la clave compartida se cierra cuando todos la tienen.
+     */
     @Bean
     public InternalServiceAuthenticationFilter internalServiceAuthenticationFilter(
             JwksKeyManager jwksKeyManager,
             org.springframework.core.env.Environment environment) {
-        return new InternalServiceAuthenticationFilter(internalServiceKey, jwksKeyManager, environment);
+        java.util.Map<String, String> clavesPorServicio =
+                org.springframework.boot.context.properties.bind.Binder.get(environment)
+                        .bind("erp.security.internal-service.keys", java.util.Map.class)
+                        .orElseGet(java.util.Map::of);
+        return new InternalServiceAuthenticationFilter(internalServiceKey, clavesPorServicio,
+                claveCompartidaHabilitada, jwksKeyManager, environment);
     }
 
     @Bean

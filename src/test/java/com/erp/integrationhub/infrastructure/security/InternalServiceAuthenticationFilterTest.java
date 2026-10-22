@@ -23,6 +23,9 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
@@ -31,6 +34,7 @@ class InternalServiceAuthenticationFilterTest {
     private InternalServiceAuthenticationFilter filter;
     private JwksKeyManager jwksKeyManager;
     private final String internalKey = "test_internal_key_123";
+    private final String claveFleetService = "clave_de_fleet_service";
     private KeyPair keyPair;
     private final String keyId = "test-rsa-key-1";
 
@@ -50,7 +54,11 @@ class InternalServiceAuthenticationFilterTest {
                 "http://localhost:8081/.well-known/jwks.json", List.of("dev"));
         this.jwksKeyManager.registerManualKey(keyId, (RSAPublicKey) keyPair.getPublic());
 
-        this.filter = new InternalServiceAuthenticationFilter(internalKey, jwksKeyManager, entorno);
+        // La ventana de compatibilidad de la clave compartida esta ABIERTA en
+        // esta prueba: es el estado transitorio en el que los servicios van
+        // adoptando su clave propia.
+        this.filter = new InternalServiceAuthenticationFilter(internalKey,
+                java.util.Map.of("erp-fleet-service", claveFleetService), true, jwksKeyManager, entorno);
         SecurityContextHolder.clearContext();
     }
 
@@ -88,6 +96,86 @@ class InternalServiceAuthenticationFilterTest {
 
         verify(filterChain).doFilter(request, response);
         assertEquals(200, response.getStatus());
+    }
+
+    @Test
+    @DisplayName("Un servicio se autentica con SU clave y recibe SU rol")
+    void unServicioSeAutenticaConSuClaveYRecibeSuRol() throws Exception {
+        org.springframework.mock.env.MockEnvironment entorno = new org.springframework.mock.env.MockEnvironment();
+        entorno.setProperty("erp.security.internal-service.roles.erp-fleet-service", "ROLE_FLEET");
+
+        InternalServiceAuthenticationFilter filtro = new InternalServiceAuthenticationFilter(
+                internalKey, java.util.Map.of("erp-fleet-service", claveFleetService), false,
+                jwksKeyManager, entorno);
+
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/api/v1/integrations/validate/ruc/20601030013");
+        request.addHeader("X-Internal-Service-Key", claveFleetService);
+        request.addHeader("X-Internal-Service-Name", "erp-fleet-service");
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        // El filtro limpia el contexto al terminar, de modo que el principal se
+        // captura DURANTE la cadena.
+        java.util.concurrent.atomic.AtomicReference<org.springframework.security.core.Authentication>
+                capturado = new java.util.concurrent.atomic.AtomicReference<>();
+        FilterChain filterChain = mock(FilterChain.class);
+        org.mockito.Mockito.doAnswer(invocacion -> {
+            capturado.set(SecurityContextHolder.getContext().getAuthentication());
+            return null;
+        }).when(filterChain).doFilter(any(), any());
+
+        filtro.doFilter(request, response, filterChain);
+
+        var principal = capturado.get();
+        assertNotNull(principal, "El servicio se autentica con su propia clave");
+        assertTrue(principal.getAuthorities().stream()
+                        .anyMatch(a -> a.getAuthority().equals("ROLE_FLEET")),
+                "El servicio recibe el rol que se le ha configurado");
+        assertTrue(principal.toString().contains("erp-fleet-service"),
+                "El principal identifica al servicio que llama");
+    }
+
+    @Test
+    @DisplayName("Un servicio NO puede declarar el nombre de otro con su propia clave")
+    void unServicioNoPuedeDeclararElNombreDeOtro() throws Exception {
+        org.springframework.mock.env.MockEnvironment entorno = new org.springframework.mock.env.MockEnvironment();
+        entorno.setProperty("erp.security.internal-service.roles.erp-billing-service", "ROLE_BILLING");
+
+        InternalServiceAuthenticationFilter filtro = new InternalServiceAuthenticationFilter(
+                internalKey, java.util.Map.of("erp-fleet-service", claveFleetService), false,
+                jwksKeyManager, entorno);
+
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/api/v1/integrations/invoices/emit");
+        request.addHeader("X-Internal-Service-Key", claveFleetService);
+        request.addHeader("X-Internal-Service-Name", "erp-billing-service");
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain filterChain = mock(FilterChain.class);
+
+        filtro.doFilter(request, response, filterChain);
+
+        assertEquals(401, response.getStatus(),
+                "La clave de un servicio no habilita a otro: sin esto el rol acotado seria decoracion");
+    }
+
+    @Test
+    @DisplayName("Con la ventana cerrada, la clave compartida no autentica a nadie")
+    void conLaVentanaCerradaLaClaveCompartidaNoAutentica() throws Exception {
+        InternalServiceAuthenticationFilter filtro = new InternalServiceAuthenticationFilter(
+                internalKey, java.util.Map.of("erp-fleet-service", claveFleetService), false,
+                jwksKeyManager, entorno);
+
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/api/v1/integrations/invoices/emit");
+        request.addHeader("X-Internal-Service-Key", internalKey);
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain filterChain = mock(FilterChain.class);
+
+        filtro.doFilter(request, response, filterChain);
+
+        assertEquals(401, response.getStatus());
     }
 
     @Test

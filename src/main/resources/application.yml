@@ -52,7 +52,33 @@ spring:
 
 erp:
   security:
+    # Credencial de los llamadores internos. Se sustituye por una clave POR
+    # SERVICIO: la compartida se conserva solo durante la ventana de
+    # compatibilidad, y se desactiva cuando todos los servicios usen la suya.
     internal-service-key: ${INTERNAL_SERVICE_KEY:}
+    # Ventana de compatibilidad de la clave compartida. Con ella abierta,
+    # quien posea la clave compartida puede declarar el nombre de otro
+    # servicio y heredar sus roles.
+    shared-key-enabled: ${INTERNAL_SERVICE_SHARED_KEY_ENABLED:false}
+    # Clave propia de cada servicio que llama al hub:
+    #   erp.security.internal-service.keys.<servicio>=<clave>
+    # El rol que recibe cada uno es el de
+    #   erp.security.internal-service.roles.<servicio>
+    keys:
+      erp-fleet-service: ${INTEGRATION_HUB_KEY_FLEET:}
+    roles:
+      # fleet valida identidad y vehiculo contra el hub: el rol es acotado a
+      # esa operacion, y no alcanza las operaciones administrativas.
+      erp-fleet-service: ROLE_FLEET
+    platform-role:
+      # Rol con BYPASSRLS, usado EXCLUSIVAMENTE por el relay de reintentos
+      # para recorrer la cola de todos los talleres.
+      user: ${ERP_PLATFORM_ROLE_USER:erp_platform}
+      password: ${ERP_PLATFORM_ROLE_PASSWORD:erp_platform_local_password}
+    # La URL del conjunto de claves debe usar un esquema cifrado. El arranque
+    # falla de forma explicita si no lo hace, y la unica excepcion es el
+    # perfil de desarrollo local (application-dev.yml).
+    jwks-url: ${JWKS_URL:https://auth.erp-automotriz.com/.well-known/jwks.json}
   webhook:
     # Clave de firma de los avisos, PROPIA y distinta de la credencial de
     # acceso al proveedor: con la misma clave, quien tiene la credencial del
@@ -61,16 +87,6 @@ erp:
     # Ventana temporal admitida para un aviso, en segundos. Un aviso fuera de
     # la ventana se rechaza: su firma es valida, pero el aviso es viejo.
     window-seconds: ${WEBHOOK_WINDOW_SECONDS:300}
-    # La URL del conjunto de claves debe usar un esquema cifrado. El arranque
-    # falla de forma explicita si no lo hace, y la unica excepcion es el
-    # perfil de desarrollo local (application-dev.yml).
-    jwks-url: ${JWKS_URL:https://auth.erp-automotriz.com/.well-known/jwks.json}
-  security:
-    platform-role:
-      # Rol con BYPASSRLS, usado EXCLUSIVAMENTE por el relay de reintentos
-      # para recorrer la cola de todos los talleres.
-      user: ${ERP_PLATFORM_ROLE_USER:erp_platform}
-      password: ${ERP_PLATFORM_ROLE_PASSWORD:erp_platform_local_password}
   integration:
     # Adaptadores de proveedor SIMULADOS. Solo admisibles en un perfil de
     # desarrollo: fuera de el, el arranque falla de forma explicita. Un

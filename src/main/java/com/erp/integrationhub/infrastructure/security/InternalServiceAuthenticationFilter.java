@@ -35,21 +35,54 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
     private static final long CLOCK_SKEW_TOLERANCE_MS = 60000; // 60s tolerancia de reloj
 
     private final String internalServiceKey;
+    private final java.util.Map<String, String> clavesPorServicio;
+    private final boolean claveCompartidaHabilitada;
     private final JwksKeyManager jwksKeyManager;
     private final org.springframework.core.env.Environment environment;
 
     public InternalServiceAuthenticationFilter(
             String internalServiceKey,
+            java.util.Map<String, String> clavesPorServicio,
+            boolean claveCompartidaHabilitada,
             JwksKeyManager jwksKeyManager,
             org.springframework.core.env.Environment environment) {
         String resolvedKey = SecretResolver.resolveSecret(internalServiceKey);
         this.internalServiceKey = (resolvedKey != null && !resolvedKey.isBlank()) ? resolvedKey.trim() : null;
+        this.clavesPorServicio = clavesPorServicio == null ? java.util.Map.of() : clavesPorServicio;
+        this.claveCompartidaHabilitada = claveCompartidaHabilitada;
         this.jwksKeyManager = jwksKeyManager;
         this.environment = environment;
 
         if (this.internalServiceKey == null) {
             log.warn("ADVERTENCIA DE SEGURIDAD: INTERNAL_SERVICE_KEY no configurada. El bypass de servicios internos permanecerá deshabilitado.");
         }
+        if (this.claveCompartidaHabilitada) {
+            log.warn("ADVERTENCIA DE SEGURIDAD: la clave interna COMPARTIDA sigue habilitada. "
+                    + "Quien la posea puede declarar el nombre de otro servicio y heredar sus roles. "
+                    + "Debe desactivarse cuando todos los servicios usen su propia clave.");
+        }
+    }
+
+    /**
+     * Clave que se espera para el servicio que declara la peticion.
+     *
+     * <p>La clave es POR SERVICIO: cada servicio tiene la suya, y con ella no
+     * puede declarar el nombre de otro. Con una clave compartida, quien la
+     * posea puede declararse el servicio que quiera y heredar sus roles, de
+     * modo que el rol acotado no seria mas que decoracion.
+     *
+     * <p>La clave compartida solo se acepta mientras la ventana de
+     * compatibilidad siga abierta, y un servicio que ya tiene la suya usa la
+     * suya aunque la ventana siga abierta.
+     */
+    private String claveDe(String nombreServicio) {
+        if (nombreServicio != null && !nombreServicio.isBlank()) {
+            String propia = clavesPorServicio.get(nombreServicio.trim());
+            if (propia != null && !propia.isBlank()) {
+                return propia;
+            }
+        }
+        return claveCompartidaHabilitada ? internalServiceKey : null;
     }
 
     @Override
@@ -72,8 +105,11 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
         AuthenticatedUser authenticatedUser = null;
 
         // 1. Validar llamada interna de microservicio hermano con comparación timing-safe y principio de mínimo privilegio
-        if (internalKeyHeader != null && internalServiceKey != null) {
-            byte[] expectedBytes = internalServiceKey.getBytes(StandardCharsets.UTF_8);
+        String nombreServicioDeclarado = request.getHeader("X-Internal-Service-Name");
+        String claveEsperada = claveDe(nombreServicioDeclarado);
+
+        if (internalKeyHeader != null && claveEsperada != null) {
+            byte[] expectedBytes = claveEsperada.getBytes(StandardCharsets.UTF_8);
             byte[] actualBytes = internalKeyHeader.trim().getBytes(StandardCharsets.UTF_8);
             if (MessageDigest.isEqual(expectedBytes, actualBytes)) {
                 // La credencial compartida identifica al SERVICIO, no a un
@@ -88,7 +124,7 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
                 // recibe solo los roles que su configuracion le concede. Con
                 // un rol unico para todos, cualquier servicio con la
                 // credencial podia hacer lo que hiciera cualquier otro.
-                String nombreServicio = request.getHeader("X-Internal-Service-Name");
+                String nombreServicio = nombreServicioDeclarado;
                 authenticatedUser = new AuthenticatedUser(
                         UUID.randomUUID(),
                         null,

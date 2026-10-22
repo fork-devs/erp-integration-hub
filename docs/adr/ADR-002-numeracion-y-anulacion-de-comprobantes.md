@@ -96,7 +96,7 @@ hoy vive entero en un sitio. El coste no se corresponde con el beneficio.
 **Negativas:**
 
 - El hub acumula responsabilidades fiscales, y con ellas la dependencia de
-  la autoridad fiscal. La已经有 la tinha, pero ahora está enunciada: es una
+  la autoridad fiscal. La tenía, pero ahora está enunciada: es una
   deuda conocida y no una sorpresa.
 - La numeración requiere una tabla propia, que hay que mantener y cuyo
   crecimiento hay que vigilar.

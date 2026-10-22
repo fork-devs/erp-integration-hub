@@ -14,6 +14,7 @@ import com.erp.integrationhub.interfaces.rest.support.TenantResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -36,6 +37,7 @@ public class IdentityValidationController {
     }
 
     @GetMapping("/ruc/{ruc}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'ADMIN_TALLER', 'SUPERADMIN', 'ASESOR', 'MECANICO', 'INTERNAL_SERVICE')")
     @Operation(summary = "Validate RUC via SUNAT", description = "Retrieves fiscal address, status (HABIDO), condition (ACTIVO) with 30-day TTL local cache")
     public ResponseEntity<RucResponse> validateRuc(
             @PathVariable("ruc") String ruc,
@@ -48,6 +50,7 @@ public class IdentityValidationController {
     }
 
     @GetMapping("/placa/{placa}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'ADMIN_TALLER', 'SUPERADMIN', 'ASESOR', 'MECANICO', 'INTERNAL_SERVICE')")
     @Operation(summary = "Validate vehicle plate via SUNARP", description = "Retrieves VIN, brand, model, color, fuel type with 7-day TTL local cache")
     public ResponseEntity<PlacaResponse> validatePlaca(
             @PathVariable("placa") String placa,

@@ -15,6 +15,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -37,6 +38,11 @@ public class ElectronicInvoicingController {
     }
 
     @PostMapping("/emit")
+    /**
+     * Emitir un comprobante tiene efectos fiscales: solo lo ejecutan los roles
+     * de administracion y los servicios internos.
+     */
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'ADMIN_TALLER', 'SUPERADMIN', 'INTERNAL_SERVICE')")
     @Operation(summary = "Emit electronic invoice/boleta to SUNAT via APISUNAT", description = "Submits invoice to SUNAT with deterministic idempotency guarantee and automatic outbox retry on failure")
     public ResponseEntity<ComprobanteResponse> emitInvoice(
             @RequestHeader(value = "X-Tenant-ID", required = false) UUID requestedTenantId,
@@ -101,6 +107,7 @@ public class ElectronicInvoicingController {
     }
 
     @PostMapping("/void")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'ADMIN_TALLER', 'SUPERADMIN', 'INTERNAL_SERVICE')")
     @Operation(summary = "Void/cancel electronic invoice, note or boleta via APISUNAT", description = "Dispatches communication of voiding (/api/v3/voided) or daily summary (/api/v3/daily-summary) to SUNAT")
     public ResponseEntity<ComprobanteResponse> voidInvoice(
             @RequestHeader("X-Tenant-ID") UUID tenantId,
@@ -122,6 +129,7 @@ public class ElectronicInvoicingController {
     }
 
     @PostMapping("/status")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'ADMIN_TALLER', 'SUPERADMIN', 'ASESOR', 'MECANICO', 'INTERNAL_SERVICE')")
     @Operation(summary = "Query document status in SUNAT via APISUNAT", description = "Retrieves current status, hash, XML, CDR, and PDF links (/api/v3/status)")
     public ResponseEntity<ComprobanteResponse> checkStatus(
             @RequestHeader(value = "X-Tenant-ID", required = false) UUID requestedTenantId,

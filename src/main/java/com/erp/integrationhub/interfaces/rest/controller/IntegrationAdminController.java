@@ -7,6 +7,7 @@ import com.erp.integrationhub.domain.model.RetryTask;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
 import com.erp.integrationhub.infrastructure.security.AuthenticatedUser;
+import com.erp.integrationhub.interfaces.rest.support.TenantContextScope;
 import com.erp.integrationhub.interfaces.rest.response.IntegrationAttemptResponse;
 import com.erp.integrationhub.interfaces.rest.response.RetryTaskResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -66,27 +67,33 @@ public class IntegrationAdminController {
         }
 
         // Validación estricta de acceso al tenant: usuarios regulares/tenant admins no pueden consultar globalmente
-        if (tenantId == null && (authUser == null || (!authUser.isInternalService() && !authUser.isSuperAdmin()))) {
+        // Sin taller, solo quien tiene alcance transversal puede consultar en
+        // global. La credencial compartida de servicio interno ya no concede
+        // este alcance: es una credencial de servicio, no de administracion de
+        // plataforma.
+        if (tenantId == null && (authUser == null || !authUser.isSuperAdmin())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
-        if (tenantId != null && authUser != null && !authUser.canAccessTenant(tenantId)) {
+        if (tenantId != null && authUser != null && !authUser.canOperateOnTenant(tenantId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
+
+        final UUID tallerEfectivo = tenantId;
 
         int effectiveLimit = Math.max(1, Math.min(limit, MAX_LIMIT));
 
         List<IntegrationAttempt> attempts;
         if (tenantId != null) {
             if (referenceId != null) {
-                attempts = attemptRepositoryPort.findByTenantIdAndReferenceId(tenantId, referenceId);
+                attempts = enContextoDeTaller(tallerEfectivo, () -> attemptRepositoryPort.findByTenantIdAndReferenceId(tallerEfectivo, referenceId));
             } else {
-                attempts = attemptRepositoryPort.findByTenantId(tenantId, effectiveLimit);
+                attempts = enContextoDeTaller(tallerEfectivo, () -> attemptRepositoryPort.findByTenantId(tallerEfectivo, effectiveLimit));
             }
         } else if (status != null) {
-            attempts = attemptRepositoryPort.findByStatus(status, effectiveLimit);
+            attempts = enContextoDeTaller(tallerEfectivo, () -> attemptRepositoryPort.findByTenantIdAndStatus(tallerEfectivo, status, effectiveLimit));
         } else {
-            attempts = attemptRepositoryPort.findByStatus(AttemptStatus.OK, effectiveLimit);
+            attempts = enContextoDeTaller(tallerEfectivo, () -> attemptRepositoryPort.findByTenantIdAndStatus(tallerEfectivo, AttemptStatus.OK, effectiveLimit));
         }
 
         List<IntegrationAttemptResponse> response = attempts.stream()
@@ -109,13 +116,19 @@ public class IntegrationAdminController {
             tenantId = authUser.tenantId();
         }
 
-        if (tenantId == null && (authUser == null || (!authUser.isInternalService() && !authUser.isSuperAdmin()))) {
+        // Sin taller, solo quien tiene alcance transversal puede consultar en
+        // global. La credencial compartida de servicio interno ya no concede
+        // este alcance: es una credencial de servicio, no de administracion de
+        // plataforma.
+        if (tenantId == null && (authUser == null || !authUser.isSuperAdmin())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
-        if (tenantId != null && authUser != null && !authUser.canAccessTenant(tenantId)) {
+        if (tenantId != null && authUser != null && !authUser.canOperateOnTenant(tenantId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
+
+        final UUID tallerEfectivo = tenantId;
 
         if (tenantId == null) {
             return ResponseEntity.badRequest().build();
@@ -123,7 +136,7 @@ public class IntegrationAdminController {
 
         int effectiveLimit = Math.max(1, Math.min(limit, MAX_LIMIT));
 
-        List<RetryTask> tasks = retryQueueRepositoryPort.findDlqTasks(tenantId, effectiveLimit);
+        List<RetryTask> tasks = enContextoDeTaller(tallerEfectivo, () -> retryQueueRepositoryPort.findDlqTasks(tallerEfectivo, effectiveLimit));
         List<RetryTaskResponse> response = tasks.stream()
                 .map(RetryTaskResponse::fromDomain)
                 .toList();
@@ -145,6 +158,19 @@ public class IntegrationAdminController {
                 "message", "Retry processing cycle executed successfully",
                 "processedTasks", processed
         ));
+    }
+
+    /**
+     * Ejecuta la operacion con el contexto de taller establecido, de modo que
+     * la politica de Row-Level Security filtre por el taller del principal.
+     */
+    private <T> T enContextoDeTaller(UUID tenantId, java.util.function.Supplier<T> operacion) {
+        if (tenantId == null) {
+            return operacion.get();
+        }
+        try (TenantContextScope scope = TenantContextScope.forTenant(tenantId)) {
+            return operacion.get();
+        }
     }
 
     private AuthenticatedUser getAuthenticatedUser() {

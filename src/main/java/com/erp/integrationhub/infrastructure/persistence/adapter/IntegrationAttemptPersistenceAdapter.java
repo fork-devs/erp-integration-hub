@@ -8,6 +8,7 @@ import com.erp.integrationhub.infrastructure.persistence.entity.IntegrationAttem
 import com.erp.integrationhub.infrastructure.persistence.repository.SpringDataIntegrationAttemptRepository;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.UUID;
@@ -23,6 +24,7 @@ public class IntegrationAttemptPersistenceAdapter implements IntegrationAttemptR
     }
 
     @Override
+    @Transactional
     public IntegrationAttempt save(IntegrationAttempt attempt) {
         IntegrationAttemptJpaEntity entity = toEntity(attempt);
         IntegrationAttemptJpaEntity saved = repository.save(entity);
@@ -30,6 +32,7 @@ public class IntegrationAttemptPersistenceAdapter implements IntegrationAttemptR
     }
 
     @Override
+    @Transactional
     public List<IntegrationAttempt> findByTenantIdAndReferenceId(UUID tenantId, UUID referenceId) {
         return repository.findByTenantIdAndReferenceId(tenantId, referenceId).stream()
                 .map(this::toDomain)
@@ -37,6 +40,7 @@ public class IntegrationAttemptPersistenceAdapter implements IntegrationAttemptR
     }
 
     @Override
+    @Transactional
     public List<IntegrationAttempt> findByTenantId(UUID tenantId, int limit) {
         return repository.findByTenantIdOrderByCreatedAtDesc(tenantId, PageRequest.of(0, limit)).stream()
                 .map(this::toDomain)
@@ -44,8 +48,9 @@ public class IntegrationAttemptPersistenceAdapter implements IntegrationAttemptR
     }
 
     @Override
-    public List<IntegrationAttempt> findByStatus(AttemptStatus status, int limit) {
-        return repository.findByStatusOrderByCreatedAtDesc(status.name(), PageRequest.of(0, limit)).stream()
+    @Transactional
+    public List<IntegrationAttempt> findByTenantIdAndStatus(UUID tenantId, AttemptStatus status, int limit) {
+        return repository.findByTenantIdAndStatusOrderByCreatedAtDesc(tenantId, status.name(), PageRequest.of(0, limit)).stream()
                 .map(this::toDomain)
                 .collect(Collectors.toList());
     }

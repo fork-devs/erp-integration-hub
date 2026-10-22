@@ -5,6 +5,9 @@ import com.erp.integrationhub.application.dto.result.PagoResult;
 import com.erp.integrationhub.application.usecase.ProcesarPagoUseCase;
 import com.erp.integrationhub.interfaces.rest.request.ProcesarPagoRequest;
 import com.erp.integrationhub.interfaces.rest.response.PagoResponse;
+import com.erp.integrationhub.interfaces.rest.support.AuthenticatedUserHolder;
+import com.erp.integrationhub.interfaces.rest.support.TenantContextScope;
+import com.erp.integrationhub.interfaces.rest.support.TenantResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -32,9 +35,11 @@ public class PaymentIntegrationController {
     @PostMapping("/charge")
     @Operation(summary = "Process a credit/debit card payment via Stripe", description = "Executes charge with Stripe token and deterministic idempotency lock")
     public ResponseEntity<PagoResponse> processCharge(
-            @RequestHeader("X-Tenant-ID") UUID tenantId,
+            @RequestHeader(value = "X-Tenant-ID", required = false) UUID requestedTenantId,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyHeader,
             @Valid @RequestBody ProcesarPagoRequest request) {
+
+        UUID tenantId = TenantResolver.resolveForOperation(requestedTenantId, AuthenticatedUserHolder.current());
 
         // Deterministic Idempotency Key derivation to prevent duplicate card charges
         String effectiveIdempotencyKey;
@@ -68,7 +73,19 @@ public class PaymentIntegrationController {
                 effectiveIdempotencyKey
         );
 
-        PagoResult result = procesarPagoUseCase.procesarPago(command);
+        PagoResult result = enContextoDeTaller(tenantId, () -> procesarPagoUseCase.procesarPago(command));
         return ResponseEntity.ok(PagoResponse.fromResult(result));
     }
+
+    /**
+     * Ejecuta la operacion con el contexto de taller establecido, de modo que
+     * la politica de Row-Level Security filtre por el taller del principal y
+     * no por el de la fila.
+     */
+    private <T> T enContextoDeTaller(UUID tenantId, java.util.function.Supplier<T> operacion) {
+        try (TenantContextScope scope = TenantContextScope.forTenant(tenantId)) {
+            return operacion.get();
+        }
+    }
+
 }

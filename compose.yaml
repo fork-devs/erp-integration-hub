@@ -6,6 +6,11 @@ services:
       POSTGRES_DB: erp_integration_db
       POSTGRES_USER: integration_user
       POSTGRES_PASSWORD: integration_secret
+      # El rol de ejecucion (erp_app) y el de plataforma (erp_platform) los
+      # crean las migraciones que conceden los permisos. Sus contrasenas las
+      # fija la aplicacion en ERP_APP_DB_PASSWORD y
+      # ERP_PLATFORM_ROLE_PASSWORD (ver .env.example), que son los valores
+      # que las migraciones aplican como placeholders.
     ports:
       - "5434:5432"
     volumes:

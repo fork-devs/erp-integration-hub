@@ -9,8 +9,10 @@ spring:
 
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5434/erp_integration_db}
-    username: ${SPRING_DATASOURCE_USERNAME:integration_user}
-    password: ${SPRING_DATASOURCE_PASSWORD:integration_secret}
+    # Rol de EJECUCION: sin privilegios de propietario y con NOBYPASSRLS, de
+    # modo que la politica de Row-Level Security le sea aplicable.
+    username: ${ERP_APP_DB_USER:erp_app}
+    password: ${ERP_APP_DB_PASSWORD:erp_app_local_password}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10
@@ -31,7 +33,15 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
-    baseline-on-migrate: true
+    # El servicio es dueno de su esquema: marcar como baseline una base ya
+    # existente haria que las migraciones no se ejecutaran.
+    baseline-on-migrate: false
+    # Rol de MIGRACION: el propietario, que necesita permisos de DDL.
+    user: ${SPRING_FLYWAY_USER:integration_user}
+    password: ${SPRING_FLYWAY_PASSWORD:integration_secret}
+    placeholders:
+      appRolePassword: ${ERP_APP_DB_PASSWORD:erp_app_local_password}
+      platformRolePassword: ${ERP_PLATFORM_ROLE_PASSWORD:erp_platform_local_password}
 
   data:
     redis:
@@ -44,6 +54,12 @@ erp:
   security:
     internal-service-key: ${INTERNAL_SERVICE_KEY:}
     jwks-url: ${JWKS_URL:http://localhost:8081/.well-known/jwks.json}
+  security:
+    platform-role:
+      # Rol con BYPASSRLS, usado EXCLUSIVAMENTE por el relay de reintentos
+      # para recorrer la cola de todos los talleres.
+      user: ${ERP_PLATFORM_ROLE_USER:erp_platform}
+      password: ${ERP_PLATFORM_ROLE_PASSWORD:erp_platform_local_password}
   integration:
     apisunat:
       base-url: ${APISUNAT_BASE_URL:https://sandbox.apisunat.pe}

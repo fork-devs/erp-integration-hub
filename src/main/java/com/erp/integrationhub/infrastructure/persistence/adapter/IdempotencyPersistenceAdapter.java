@@ -6,6 +6,7 @@ import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.infrastructure.persistence.entity.IdempotencyKeyJpaEntity;
 import com.erp.integrationhub.infrastructure.persistence.repository.SpringDataIdempotencyRepository;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -20,11 +21,13 @@ public class IdempotencyPersistenceAdapter implements IdempotencyRepositoryPort 
     }
 
     @Override
+    @Transactional
     public Optional<IdempotencyRecord> findByTenantAndScopeAndKey(UUID tenantId, IdempotencyScope scope, String key) {
         return repository.findByTenantIdAndScopeAndKey(tenantId, scope.name(), key).map(this::toDomain);
     }
 
     @Override
+    @Transactional
     public IdempotencyRecord save(IdempotencyRecord record) {
         IdempotencyKeyJpaEntity entity = toEntity(record);
         IdempotencyKeyJpaEntity saved = repository.save(entity);

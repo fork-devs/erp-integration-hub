@@ -40,7 +40,6 @@ public class IdentityValidationService implements ConsultarRucUseCase, Consultar
         this.attemptRepositoryPort = attemptRepositoryPort;
     }
 
-    public static final UUID SYSTEM_TENANT_ID = UUID.fromString("00000000-0000-0000-0000-000000000000");
 
     @Override
     public RucResult consultarRuc(ConsultarRucCommand command) {
@@ -101,7 +100,7 @@ public class IdentityValidationService implements ConsultarRucUseCase, Consultar
     }
 
     private void logAttempt(UUID tenantId, ProviderType provider, String op, String referenceKey, String error) {
-        UUID effectiveTenant = tenantId != null ? tenantId : SYSTEM_TENANT_ID;
+        UUID effectiveTenant = tenantId;
         UUID referenceId = (referenceKey != null && !referenceKey.isBlank())
                 ? UUID.nameUUIDFromBytes(referenceKey.getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 : UUID.randomUUID();

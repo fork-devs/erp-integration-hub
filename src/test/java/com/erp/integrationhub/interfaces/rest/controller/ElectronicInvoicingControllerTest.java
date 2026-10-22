@@ -3,6 +3,7 @@ package com.erp.integrationhub.interfaces.rest.controller;
 import com.erp.integrationhub.application.dto.result.ComprobanteResult;
 import com.erp.integrationhub.application.usecase.EmitirComprobanteUseCase;
 import com.erp.integrationhub.interfaces.rest.advice.GlobalRestExceptionHandler;
+import com.erp.integrationhub.support.AuthenticatedUserContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -32,6 +33,7 @@ class ElectronicInvoicingControllerTest {
     @BeforeEach
     void setUp() {
         ElectronicInvoicingController controller = new ElectronicInvoicingController(emitirComprobanteUseCase);
+        AuthenticatedUserContext.asTenant(UUID.randomUUID());
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalRestExceptionHandler())
                 .build();
@@ -41,6 +43,7 @@ class ElectronicInvoicingControllerTest {
     @DisplayName("POST /api/v1/integrations/invoices/emit - Should return 200 OK with voucher response")
     void emitInvoice_WhenValidRequest_ShouldReturn200() throws Exception {
         UUID tenantId = UUID.randomUUID();
+        AuthenticatedUserContext.asTenant(tenantId);
         UUID comprobanteId = UUID.randomUUID();
 
         ComprobanteResult mockResult = new ComprobanteResult(
@@ -98,6 +101,7 @@ class ElectronicInvoicingControllerTest {
     @DisplayName("POST /api/v1/integrations/invoices/void - Should return 200 OK with voided response")
     void voidInvoice_WhenValidRequest_ShouldReturn200() throws Exception {
         UUID tenantId = UUID.randomUUID();
+        AuthenticatedUserContext.asTenant(tenantId);
         UUID comprobanteId = UUID.randomUUID();
 
         ComprobanteResult mockResult = new ComprobanteResult(
@@ -137,6 +141,7 @@ class ElectronicInvoicingControllerTest {
     @DisplayName("POST /api/v1/integrations/invoices/status - Should return 200 OK with current document status")
     void checkStatus_WhenValidRequest_ShouldReturn200() throws Exception {
         UUID tenantId = UUID.randomUUID();
+        AuthenticatedUserContext.asTenant(tenantId);
         UUID comprobanteId = UUID.randomUUID();
 
         ComprobanteResult mockResult = new ComprobanteResult(

@@ -1,5 +1,6 @@
 server:
   port: ${SERVER_PORT:8085}
+  forward-headers-strategy: framework
   servlet:
     context-path: /
 
@@ -125,3 +126,29 @@ logging:
   level:
     root: INFO
     com.erp.integrationhub: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+        liveness:
+          include: livenessState
+  health:
+    db:
+      enabled: true
+    readiness:
+      state:
+        enabled: true
+    liveness:
+      state:
+        enabled: true

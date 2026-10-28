@@ -1,19 +1,19 @@
 package com.erp.integrationhub.application.service;
 
-import com.erp.integrationhub.application.dto.command.ConsultarPlacaCommand;
-import com.erp.integrationhub.application.dto.command.ConsultarRucCommand;
-import com.erp.integrationhub.application.dto.result.PlacaResult;
+import com.erp.integrationhub.application.dto.command.QueryPlateCommand;
+import com.erp.integrationhub.application.dto.command.QueryRucCommand;
+import com.erp.integrationhub.application.dto.result.PlateResult;
 import com.erp.integrationhub.application.dto.result.RucResult;
-import com.erp.integrationhub.domain.model.ConsultaPlacaResult;
-import com.erp.integrationhub.domain.model.ConsultaRucResult;
+import com.erp.integrationhub.domain.model.QueryPlateResult;
+import com.erp.integrationhub.domain.model.QueryRucResult;
 import com.erp.integrationhub.domain.port.IdentityCachePort;
+import com.erp.integrationhub.domain.port.IdentityValidatorPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
-import com.erp.integrationhub.domain.port.ValidadorIdentidadPort;
-import com.erp.integrationhub.domain.port.ValidadorVehicularPort;
+import com.erp.integrationhub.domain.port.VehicleValidatorPort;
 import com.erp.integrationhub.infrastructure.adapter.cache.RedisIdentityCacheAdapter;
+import com.erp.integrationhub.support.DirectUnitOfWork;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
-import com.erp.integrationhub.support.DirectUnitOfWork;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -26,7 +26,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -35,10 +34,10 @@ import static org.mockito.Mockito.when;
 class IdentityValidationServiceTest {
 
     @Mock
-    private ValidadorIdentidadPort validadorIdentidadPort;
+    private IdentityValidatorPort identityValidatorPort;
 
     @Mock
-    private ValidadorVehicularPort validadorVehicularPort;
+    private VehicleValidatorPort vehicleValidatorPort;
 
     @Mock
     private IntegrationAttemptRepositoryPort attemptRepositoryPort;
@@ -51,8 +50,8 @@ class IdentityValidationServiceTest {
     void setUp() {
         IdentityCachePort identityCachePort = new RedisIdentityCacheAdapter(null);
         identityValidationService = new IdentityValidationService(
-                validadorIdentidadPort,
-                validadorVehicularPort,
+                identityValidatorPort,
+                vehicleValidatorPort,
                 identityCachePort,
                 attemptRepositoryPort,
                 DirectUnitOfWork.INSTANCE
@@ -61,12 +60,12 @@ class IdentityValidationServiceTest {
 
     @Test
     @DisplayName("Should query RUC from external provider on cache miss and from cache on second call")
-    void consultarRuc_CachingVerification() {
+    void queryRuc_CachingVerification() {
         // Given
         String ruc = "20601234567";
-        ConsultarRucCommand command = new ConsultarRucCommand(tenantId, ruc);
+        QueryRucCommand command = new QueryRucCommand(tenantId, ruc);
 
-        ConsultaRucResult mockRucResult = new ConsultaRucResult(
+        QueryRucResult mockRucResult = new QueryRucResult(
                 ruc,
                 "TALLER MECANICO RAPIDO SAC",
                 "ACTIVO",
@@ -78,39 +77,39 @@ class IdentityValidationServiceTest {
                 "150115",
                 true
         );
-        when(validadorIdentidadPort.consultarRuc(ruc)).thenReturn(mockRucResult);
+        when(identityValidatorPort.queryRuc(ruc)).thenReturn(mockRucResult);
 
         // When 1: First call (miss)
-        RucResult result1 = identityValidationService.consultarRuc(command);
+        RucResult result1 = identityValidationService.queryRuc(command);
 
         // Then 1
         assertNotNull(result1);
-        assertTrue(result1.esValido());
+        assertTrue(result1.valid());
         assertFalse(result1.fromCache());
-        assertEquals("TALLER MECANICO RAPIDO SAC", result1.razonSocial());
+        assertEquals("TALLER MECANICO RAPIDO SAC", result1.legalName());
 
         // When 2: Second call (hit in Caffeine cache)
-        RucResult result2 = identityValidationService.consultarRuc(command);
+        RucResult result2 = identityValidationService.queryRuc(command);
 
         // Then 2
         assertNotNull(result2);
-        assertTrue(result2.esValido());
+        assertTrue(result2.valid());
         assertTrue(result2.fromCache());
-        assertEquals("TALLER MECANICO RAPIDO SAC", result2.razonSocial());
+        assertEquals("TALLER MECANICO RAPIDO SAC", result2.legalName());
 
         // External port should only be called once!
-        verify(validadorIdentidadPort, times(1)).consultarRuc(ruc);
+        verify(identityValidatorPort, times(1)).queryRuc(ruc);
     }
 
     @Test
-    @DisplayName("Should query Placa from external provider on cache miss and from cache on second call")
-    void consultarPlaca_CachingVerification() {
+    @DisplayName("Should query Plate from external provider on cache miss and from cache on second call")
+    void queryPlate_CachingVerification() {
         // Given
-        String placa = "ABC123";
-        ConsultarPlacaCommand command = new ConsultarPlacaCommand(tenantId, placa);
+        String plate = "ABC123";
+        QueryPlateCommand command = new QueryPlateCommand(tenantId, plate);
 
-        ConsultaPlacaResult mockPlacaResult = new ConsultaPlacaResult(
-                placa,
+        QueryPlateResult mockPlateResult = new QueryPlateResult(
+                plate,
                 "TOYOTA",
                 "HILUX",
                 "8AJHA89201L001234",
@@ -120,34 +119,34 @@ class IdentityValidationServiceTest {
                 "DIESEL",
                 true
         );
-        when(validadorVehicularPort.consultarPlaca(placa)).thenReturn(mockPlacaResult);
+        when(vehicleValidatorPort.queryPlate(plate)).thenReturn(mockPlateResult);
 
         // When 1: First call (miss)
-        PlacaResult result1 = identityValidationService.consultarPlaca(command);
+        PlateResult result1 = identityValidationService.queryPlate(command);
 
         // Then 1
         assertNotNull(result1);
-        assertTrue(result1.esValido());
+        assertTrue(result1.valid());
         assertFalse(result1.fromCache());
-        assertEquals("TOYOTA", result1.marca());
+        assertEquals("TOYOTA", result1.brand());
 
         // When 2: Second call (hit in Caffeine cache)
-        PlacaResult result2 = identityValidationService.consultarPlaca(command);
+        PlateResult result2 = identityValidationService.queryPlate(command);
 
         // Then 2
         assertNotNull(result2);
-        assertTrue(result2.esValido());
+        assertTrue(result2.valid());
         assertTrue(result2.fromCache());
-        assertEquals("TOYOTA", result2.marca());
+        assertEquals("TOYOTA", result2.brand());
 
         // External port should only be called once!
-        verify(validadorVehicularPort, times(1)).consultarPlaca(placa);
+        verify(vehicleValidatorPort, times(1)).queryPlate(plate);
     }
 
     @Test
     @DisplayName("Should throw IllegalArgumentException when RUC is not 11 digits")
-    void consultarRuc_WhenInvalidLength_ThrowsException() {
-        ConsultarRucCommand command = new ConsultarRucCommand(tenantId, "12345");
-        assertThrows(IllegalArgumentException.class, () -> identityValidationService.consultarRuc(command));
+    void queryRuc_WhenInvalidLength_ThrowsException() {
+        QueryRucCommand command = new QueryRucCommand(tenantId, "12345");
+        assertThrows(IllegalArgumentException.class, () -> identityValidationService.queryRuc(command));
     }
 }

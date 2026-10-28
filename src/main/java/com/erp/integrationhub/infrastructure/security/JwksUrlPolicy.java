@@ -4,26 +4,27 @@ import java.net.URI;
 import java.util.List;
 
 /**
- * Politica de la URL del conjunto de claves.
+ * Security policy for the JWKS endpoint URL.
  *
- * <p>El conjunto de claves se descarga por HTTP: sin cifrar, cualquiera que
- * este en el camino puede sustituir las claves y, con ellas, firmar tokens
- * que el servicio aceptara. Es un bypass de la autenticacion completo.
+ * <p>The JWKS key set is downloaded via HTTP: without TLS encryption, network intermediaries
+ * could tamper with keys and forge validly signed tokens, completely bypassing authentication.
  *
- * <p>La unica excepcion es el perfil de desarrollo local, donde el emisor se
- * sirve en la propia maquina. Fuera de ese perfil, la URL debe usar un
- * esquema cifrado, y el arranque falla de forma explicita si no.
+ * <p>The only exception is local development profiles where the mock or auth server runs locally.
+ * Outside those profiles, the URL must use an encrypted scheme (HTTPS), or startup fails explicitly.
  */
 public final class JwksUrlPolicy {
 
-    /** Perfiles en los que se permite la URL en claro. */
+    /** Profiles permitting plaintext HTTP URLs. */
     private static final List<String> PERFILES_DE_DESARROLLO = List.of("dev", "local");
 
     private JwksUrlPolicy() {
     }
 
     /**
-     * Comprueba la URL y lanza una excepcion si no cumple la politica.
+     * Validates the configured URL against the environment profile policy.
+     *
+     * @param jwksUrl configured JWKS URL
+     * @param activeProfiles active Spring profiles
      */
     public static void verificar(String jwksUrl, List<String> activeProfiles) {
         if (jwksUrl == null || jwksUrl.isBlank()) {

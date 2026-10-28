@@ -1,23 +1,25 @@
 package com.erp.integrationhub.application.service;
 
-import com.erp.integrationhub.application.dto.command.ProcesarPagoCommand;
-import com.erp.integrationhub.application.dto.result.PagoResult;
+import com.erp.integrationhub.application.dto.command.ProcessPaymentCommand;
+import com.erp.integrationhub.application.dto.result.PaymentResult;
 import com.erp.integrationhub.domain.model.IdempotencyKeyState;
 import com.erp.integrationhub.domain.model.IdempotencyRecord;
 import com.erp.integrationhub.domain.model.IdempotencyScope;
-import com.erp.integrationhub.domain.model.ResultadoPago;
+import com.erp.integrationhub.domain.model.PaymentOutcome;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
-import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
+import com.erp.integrationhub.domain.port.PaymentGatewayPort;
+import com.erp.integrationhub.domain.util.PayloadFingerprint;
+import com.erp.integrationhub.support.DirectUnitOfWork;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
-import com.erp.integrationhub.support.DirectUnitOfWork;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -36,7 +38,7 @@ import static org.mockito.Mockito.when;
 class PaymentIntegrationServiceTest {
 
     @Mock
-    private PasarelaDePagoPort pasarelaDePagoPort;
+    private PaymentGatewayPort paymentGatewayPort;
 
     @Mock
     private IdempotencyRepositoryPort idempotencyRepositoryPort;
@@ -52,7 +54,7 @@ class PaymentIntegrationServiceTest {
     @BeforeEach
     void setUp() {
         paymentIntegrationService = new PaymentIntegrationService(
-                pasarelaDePagoPort,
+                paymentGatewayPort,
                 idempotencyRepositoryPort,
                 attemptRepositoryPort,
                 DirectUnitOfWork.INSTANCE
@@ -61,43 +63,40 @@ class PaymentIntegrationServiceTest {
 
     @Test
     @DisplayName("Should successfully charge card via Stripe and record idempotency")
-    void procesarPago_WhenNewRequest_ShouldCallStripeAndSaveIdempotency() {
+    void processPayment_WhenNewRequest_ShouldCallStripeAndSaveIdempotency() {
         // Given
-        ProcesarPagoCommand command = new ProcesarPagoCommand(
+        ProcessPaymentCommand command = new ProcessPaymentCommand(
                 tenantId,
                 paymentId,
                 new BigDecimal("250.00"),
                 "PEN",
                 "tok_visa",
-                "Reparacion de Frenos y Cambio de Aceite",
-                "cliente@taller.pe",
+                "Brake repair and oil change",
+                "client@workshop.pe",
                 "idem-pay-01"
         );
 
         when(idempotencyRepositoryPort.findByTenantAndScopeAndKey(tenantId, IdempotencyScope.PAYMENT, "idem-pay-01"))
                 .thenReturn(Optional.empty());
 
-        // La clave se RECLAMA antes de contactar al proveedor, y la
-        // reclamacion devuelve el registro que se actualizara despues.
         when(idempotencyRepositoryPort.claim(eq(tenantId), eq(IdempotencyScope.PAYMENT), eq("idem-pay-01"), anyString()))
                 .thenReturn(IdempotencyRecord.claiming(tenantId, IdempotencyScope.PAYMENT, "idem-pay-01", "huella"));
 
-        ResultadoPago resultadoStripe = ResultadoPago.exitoso("ch_3M4vX...mock", "AUTH-994821");
-        when(pasarelaDePagoPort.procesarCobro(any())).thenReturn(resultadoStripe);
+        PaymentOutcome outcomeStripe = PaymentOutcome.success("ch_3M4vX...mock", "AUTH-994821");
+        when(paymentGatewayPort.processCharge(any())).thenReturn(outcomeStripe);
 
         // When
-        PagoResult result = paymentIntegrationService.procesarPago(command);
+        PaymentResult result = paymentIntegrationService.processPayment(command);
 
         // Then
         assertNotNull(result);
-        assertTrue(result.exitoso());
-        assertEquals("SUCCEEDED", result.estado());
+        assertTrue(result.successful());
+        assertEquals("SUCCEEDED", result.status());
         assertEquals("ch_3M4vX...mock", result.chargeId());
-        assertEquals("AUTH-994821", result.codigoAutorizacion());
+        assertEquals("AUTH-994821", result.authorizationCode());
         assertFalse(result.cachedResponse());
 
         verify(attemptRepositoryPort).save(any());
-        // El resultado se ESCRIBE sobre la fila reclamada, no en una nueva.
         verify(idempotencyRepositoryPort).claim(eq(tenantId), eq(IdempotencyScope.PAYMENT), eq("idem-pay-01"), anyString());
         verify(idempotencyRepositoryPort).updateByKey(eq(tenantId), eq(IdempotencyScope.PAYMENT), eq("idem-pay-01"), any());
         verify(idempotencyRepositoryPort, never()).save(any());
@@ -105,47 +104,44 @@ class PaymentIntegrationServiceTest {
 
     @Test
     @DisplayName("Should return cached response when idempotency key is detected")
-    void procesarPago_WhenIdempotencyExists_ShouldReturnCached() {
+    void processPayment_WhenIdempotencyExists_ShouldReturnCached() {
         // Given
-        ProcesarPagoCommand command = new ProcesarPagoCommand(
+        ProcessPaymentCommand command = new ProcessPaymentCommand(
                 tenantId,
                 paymentId,
                 new BigDecimal("150.00"),
                 "PEN",
                 "tok_visa",
-                "Alineamiento y balanceo",
-                "cliente@taller.pe",
+                "Wheel alignment and balancing",
+                "client@workshop.pe",
                 "idem-pay-cached"
         );
 
-        String cachedJson = "{\"exitoso\":true,\"estado\":\"PAID\",\"chargeId\":\"ch_cached_123\",\"clientSecret\":null,\"codigoAutorizacion\":\"AUTH-0001\",\"mensajeError\":null}";
-        // El registro almacenado lleva la huella de la MISMA peticion: con
-        // otra huella, la clave se rechaza por conflicto, porque no es la
-        // misma peticion.
-        String huella = com.erp.integrationhub.domain.util.PayloadFingerprint.of(String.join("|",
+        String cachedJson = "{\"successful\":true,\"status\":\"PAID\",\"chargeId\":\"ch_cached_123\",\"clientSecret\":null,\"authorizationCode\":\"AUTH-0001\",\"errorMessage\":null}";
+        String fingerprint = PayloadFingerprint.of(String.join("|",
                 String.valueOf(tenantId),
                 String.valueOf(paymentId),
                 "150.00",
                 "PEN",
                 "tok_visa",
-                "Alineamiento y balanceo",
-                "cliente@taller.pe"));
+                "Wheel alignment and balancing",
+                "client@workshop.pe"));
 
-        IdempotencyRecord record = new IdempotencyRecord(UUID.randomUUID(), tenantId, IdempotencyScope.PAYMENT, "idem-pay-cached", huella, "hash", cachedJson,
-                IdempotencyKeyState.COMPLETED, java.time.Instant.now());
+        IdempotencyRecord record = new IdempotencyRecord(UUID.randomUUID(), tenantId, IdempotencyScope.PAYMENT, "idem-pay-cached", fingerprint, "hash", cachedJson,
+                IdempotencyKeyState.COMPLETED, Instant.now());
 
         when(idempotencyRepositoryPort.findByTenantAndScopeAndKey(tenantId, IdempotencyScope.PAYMENT, "idem-pay-cached"))
                 .thenReturn(Optional.of(record));
 
         // When
-        PagoResult result = paymentIntegrationService.procesarPago(command);
+        PaymentResult result = paymentIntegrationService.processPayment(command);
 
         // Then
         assertNotNull(result);
-        assertTrue(result.exitoso());
+        assertTrue(result.successful());
         assertTrue(result.cachedResponse());
         assertEquals("ch_cached_123", result.chargeId());
 
-        verify(pasarelaDePagoPort, never()).procesarCobro(any());
+        verify(paymentGatewayPort, never()).processCharge(any());
     }
 }

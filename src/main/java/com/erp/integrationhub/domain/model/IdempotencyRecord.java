@@ -5,17 +5,10 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Registro de una clave de idempotencia.
+ * Record holding state and request/response payloads for an idempotency key.
  *
- * <p>Lleva la HUELLA de la carga util de la peticion, no la de la
- * respuesta. La huella de la carga util es lo que distingue "la misma
- * peticion repetida" de "otra peticion con la misma clave": sin ella, el
- * sistema devolvia el resultado de la primera y el cobro de la segunda no se
- * hacia.
- *
- * <p>La huella es CRIPTOGRAFICA (SHA-256). Con una huella de 32 bits, dos
- * cargas utiles distintas la comparten con una probabilidad alta, y la
- * comprobacion daria un falso "es la misma peticion".
+ * <p>Tracks cryptographic SHA-256 fingerprint of the request payload to distinguish
+ * identical repeated requests from different requests inadvertently sharing the same key.
  */
 public class IdempotencyRecord implements Serializable {
 
@@ -39,7 +32,7 @@ public class IdempotencyRecord implements Serializable {
                               IdempotencyKeyState state,
                               Instant createdAt) {
         if (tenantId == null || scope == null || key == null || key.trim().isEmpty()) {
-            throw new IllegalArgumentException("tenantId, scope y key son obligatorios para IdempotencyRecord");
+            throw new IllegalArgumentException("tenantId, scope, and key are required for IdempotencyRecord");
         }
         this.id = id != null ? id : UUID.randomUUID();
         this.tenantId = tenantId;
@@ -53,8 +46,13 @@ public class IdempotencyRecord implements Serializable {
     }
 
     /**
-     * Registro en curso: la clave queda reclamada antes de contactar al
-     * proveedor.
+     * Creates an in-progress record claiming the idempotency key prior to external invocation.
+     *
+     * @param tenantId workshop/tenant ID
+     * @param scope operational scope (PAYMENT, VOUCHER)
+     * @param key unique idempotency key
+     * @param requestHash SHA-256 fingerprint of the request payload
+     * @return in-progress record
      */
     public static IdempotencyRecord claiming(UUID tenantId,
                                              IdempotencyScope scope,
@@ -73,9 +71,11 @@ public class IdempotencyRecord implements Serializable {
     }
 
     /**
-     * El registro pasa a COMPLETED, con su resultado. La transicion es
-     * valida solo desde IN_PROGRESS o desde un estado ya definitivo, en el
-     * que se conserva el resultado anterior.
+     * Transitions record to COMPLETED with stored response payload and hash.
+     *
+     * @param responsePayload serialized response body
+     * @param responseHash response digest
+     * @return updated record
      */
     public IdempotencyRecord completed(String responsePayload, String responseHash) {
         return new IdempotencyRecord(id, tenantId, scope, key, requestHash, responseHash, responsePayload,
@@ -83,11 +83,9 @@ public class IdempotencyRecord implements Serializable {
     }
 
     /**
-     * El registro pasa a RELEASED: la operacion fallo de forma transitoria y
-     * la clave se libera para un reintento.
+     * Transitions record to RELEASED on transient failure, allowing retries.
      *
-     * <p>El resultado anterior se conserva, pero deja de ser DEFINITIVO: una
-     * peticion con la misma clave no debe recibirlo como si lo fuera.
+     * @return updated record with RELEASED state
      */
     public IdempotencyRecord released() {
         return new IdempotencyRecord(id, tenantId, scope, key, requestHash, responseHash, responsePayload,
@@ -95,8 +93,11 @@ public class IdempotencyRecord implements Serializable {
     }
 
     /**
-     * El registro pasa a REJECTED: la operacion fallo de forma definitiva y
-     * el resultado almacenado es definitivo.
+     * Transitions record to REJECTED on definitive failure.
+     *
+     * @param responsePayload rejection response body
+     * @param responseHash rejection response digest
+     * @return updated record with REJECTED state
      */
     public IdempotencyRecord rejected(String responsePayload, String responseHash) {
         return new IdempotencyRecord(id, tenantId, scope, key, requestHash, responseHash, responsePayload,
@@ -104,11 +105,18 @@ public class IdempotencyRecord implements Serializable {
     }
 
     /**
-     * Indica si el registro corresponde a la MISMA peticion que la huella
-     * dada.
+     * Determines whether this idempotency record belongs to the same request payload fingerprint.
+     *
+     * @param fingerprint SHA-256 fingerprint of current incoming request
+     * @return true if fingerprints match exactly
      */
+    public boolean isSameRequest(String fingerprint) {
+        return requestHash != null && requestHash.equals(fingerprint);
+    }
+
+    /** Backward compatibility accessor for isSameRequest. */
     public boolean mismaPeticion(String huella) {
-        return requestHash != null && requestHash.equals(huella);
+        return isSameRequest(huella);
     }
 
     public UUID getId() {

@@ -1,28 +1,28 @@
 package com.erp.integrationhub.application.service;
 
-import com.erp.integrationhub.application.dto.command.EmitirComprobanteCommand;
-import com.erp.integrationhub.application.dto.command.ItemComprobanteCommand;
-import com.erp.integrationhub.application.dto.result.ComprobanteResult;
-import com.erp.integrationhub.application.usecase.EmitirComprobanteUseCase;
-import com.erp.integrationhub.domain.model.ComprobanteParaDeclarar;
-import com.erp.integrationhub.domain.model.EstadoComprobante;
-import com.erp.integrationhub.domain.model.ComprobanteTipo;
+import com.erp.integrationhub.application.dto.command.EmitInvoiceCommand;
+import com.erp.integrationhub.application.dto.command.InvoiceItemCommand;
+import com.erp.integrationhub.application.dto.result.InvoiceResult;
+import com.erp.integrationhub.application.usecase.EmitInvoiceUseCase;
 import com.erp.integrationhub.domain.exception.IdempotencyConflictException;
+import com.erp.integrationhub.domain.model.Currency;
+import com.erp.integrationhub.domain.model.DeclarationResult;
 import com.erp.integrationhub.domain.model.IdempotencyRecord;
 import com.erp.integrationhub.domain.model.IdempotencyScope;
 import com.erp.integrationhub.domain.model.IntegrationAttempt;
-import com.erp.integrationhub.domain.model.ItemComprobante;
-import com.erp.integrationhub.domain.model.Moneda;
+import com.erp.integrationhub.domain.model.InvoiceItem;
+import com.erp.integrationhub.domain.model.InvoiceStatus;
+import com.erp.integrationhub.domain.model.InvoiceToDeclare;
+import com.erp.integrationhub.domain.model.InvoiceType;
 import com.erp.integrationhub.domain.model.ProviderType;
-import com.erp.integrationhub.domain.model.ResultadoDeclaracion;
-import com.erp.integrationhub.domain.util.PayloadFingerprint;
 import com.erp.integrationhub.domain.model.RetryTask;
-import com.erp.integrationhub.domain.port.EmisorTributarioPort;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
+import com.erp.integrationhub.domain.port.TaxAuthorityEmitterPort;
 import com.erp.integrationhub.domain.port.UnitOfWork;
 import com.erp.integrationhub.domain.port.VoucherNumberingPort;
+import com.erp.integrationhub.domain.util.PayloadFingerprint;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,17 +32,19 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
-public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
+/**
+ * Application service managing electronic invoice lifecycle, SUNAT declarations, and retry outbox queue.
+ */
+public class ElectronicInvoicingService implements EmitInvoiceUseCase {
 
-    /**
-     * Numero maximo de intentos de una operacion encolada. Con la escala de
-     * esperas por defecto, siete intentos cubren una ventana de unas 24 horas.
-     */
-    public static final int MAX_INTENTOS_REINTENTO = 7;
+    /** Maximum retry attempts for queued invoice operations covering ~24-hour backoff window. */
+    public static final int MAX_RETRY_ATTEMPTS = 7;
+    /** Backward compatibility alias for MAX_RETRY_ATTEMPTS. */
+    public static final int MAX_INTENTOS_REINTENTO = MAX_RETRY_ATTEMPTS;
 
     private static final Logger log = LoggerFactory.getLogger(ElectronicInvoicingService.class);
 
-    private final EmisorTributarioPort emisorTributarioPort;
+    private final TaxAuthorityEmitterPort taxAuthorityEmitterPort;
     private final IdempotencyRepositoryPort idempotencyRepositoryPort;
     private final IntegrationAttemptRepositoryPort attemptRepositoryPort;
     private final RetryQueueRepositoryPort retryQueueRepositoryPort;
@@ -51,13 +53,13 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
     private final VoucherNumberingPort voucherNumberingPort;
 
     public ElectronicInvoicingService(
-            EmisorTributarioPort emisorTributarioPort,
+            TaxAuthorityEmitterPort taxAuthorityEmitterPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             RetryQueueRepositoryPort retryQueueRepositoryPort,
             UnitOfWork unitOfWork,
             VoucherNumberingPort voucherNumberingPort) {
-        this.emisorTributarioPort = emisorTributarioPort;
+        this.taxAuthorityEmitterPort = taxAuthorityEmitterPort;
         this.idempotencyRepositoryPort = idempotencyRepositoryPort;
         this.attemptRepositoryPort = attemptRepositoryPort;
         this.retryQueueRepositoryPort = retryQueueRepositoryPort;
@@ -67,179 +69,155 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
     }
 
     @Override
-    public ComprobanteResult emitirComprobante(EmitirComprobanteCommand command) {
-        if (command.tenantId() == null || command.comprobanteId() == null) {
-            throw new IllegalArgumentException("tenantId y comprobanteId son obligatorios");
+    public InvoiceResult emitInvoice(EmitInvoiceCommand command) {
+        if (command.tenantId() == null || command.invoiceId() == null) {
+            throw new IllegalArgumentException("tenantId and invoiceId are required");
         }
 
-        // 1. Huella de la carga util: distingue el reintento del mismo
-        // comprobante de otra emision con la misma clave.
-        String idempotencyKey = command.idempotencyKey() != null ? command.idempotencyKey().trim() : command.comprobanteId().toString();
-        String huella = PayloadFingerprint.of(cargaUtilDe(command));
+        // 1. Request payload fingerprint: distinguishes identical retry from different emission sharing key
+        String idempotencyKey = command.idempotencyKey() != null ? command.idempotencyKey().trim() : command.invoiceId().toString();
+        String fingerprint = PayloadFingerprint.of(buildPayloadFingerprintSource(command));
 
-        // 2. Estado de la clave de idempotencia.
+        // 2. Check existing idempotency record
         Optional<IdempotencyRecord> existingRecord = idempotencyRepositoryPort.findByTenantAndScopeAndKey(
                 command.tenantId(), IdempotencyScope.VOUCHER, idempotencyKey
         );
 
         if (existingRecord.isPresent()) {
-            IdempotencyRecord registroExistente = existingRecord.get();
+            IdempotencyRecord record = existingRecord.get();
 
-            if (!registroExistente.mismaPeticion(huella)
-                    && registroExistente.getState().resultadoDefinitivo()) {
-                // La misma clave con otra carga util NO es la misma peticion.
+            if (!record.isSameRequest(fingerprint) && record.getState().isDefinitiveResult()) {
                 throw new IdempotencyConflictException(
-                        "La clave de idempotencia ya se uso para una peticion distinta");
+                        "Idempotency key has already been used with a different request payload");
             }
 
-            ComprobanteResult cachedResult = deserializeResult(command.comprobanteId(), registroExistente.getResponsePayload(), true);
-            
-            // Si el comprobante estaba en estado PENDIENTE_SUNAT, verificar si ya fue procesado en SUNAT
-            if (EstadoComprobante.PENDIENTE.name().equalsIgnoreCase(cachedResult.estadoSunat())
-                    || EstadoComprobante.PENDIENTE_SUNAT_ALIAS.equalsIgnoreCase(cachedResult.estadoSunat())) {
+            InvoiceResult cachedResult = deserializeResult(command.invoiceId(), record.getResponsePayload(), true);
+
+            // If pending in SUNAT, re-check provider status
+            if (InvoiceStatus.PENDING.name().equalsIgnoreCase(cachedResult.sunatStatus())
+                    || InvoiceStatus.PENDIENTE_SUNAT_ALIAS.equalsIgnoreCase(cachedResult.sunatStatus())) {
                 try {
-                    ResultadoDeclaracion statusCheck = emisorTributarioPort.consultarEstadoComprobante(
-                            command.tipo(), command.serie(), command.numero()
+                    DeclarationResult statusCheck = taxAuthorityEmitterPort.queryInvoiceStatus(
+                            command.type(), command.series(), command.number()
                     );
-                    if (statusCheck.exitoso() && statusCheck.estado().emitido()) {
-                        ComprobanteResult updatedResult = new ComprobanteResult(
-                                command.comprobanteId(),
+                    if (statusCheck.successful() && statusCheck.status().isIssued()) {
+                        InvoiceResult updatedResult = new InvoiceResult(
+                                command.invoiceId(),
                                 true,
-                                statusCheck.estadoSunat(),
-                                statusCheck.codigoRespuestaSunat(),
-                                statusCheck.mensajeSunat(),
+                                statusCheck.sunatStatus(),
+                                statusCheck.sunatResponseCode(),
+                                statusCheck.sunatMessage(),
                                 statusCheck.pdfUrl(),
                                 statusCheck.xmlUrl(),
                                 statusCheck.cdrUrl(),
-                                statusCheck.hashCdr(),
+                                statusCheck.cdrHash(),
                                 false
                         );
-                        // La actualizacion va por la clave de negocio: el
-                        // resultado llega a la fila que ya existe, y no se
-                        // inserta una nueva.
                         unitOfWork.runInTransaction(() -> idempotencyRepositoryPort.updateByKey(
                                 command.tenantId(),
                                 IdempotencyScope.VOUCHER,
                                 idempotencyKey,
-                                registroExistente.completed(serializeResult(updatedResult), null)));
+                                record.completed(serializeResult(updatedResult), null)));
                         return updatedResult;
                     }
                 } catch (Exception ignored) {}
             }
 
-            log.info("Petición idempotente detectada para comprobante {}. Retornando resultado.", command.comprobanteId());
+            log.info("Idempotent request detected for invoice {}. Returning cached result.", command.invoiceId());
             return cachedResult;
         }
 
-        // 2. Mapeo al modelo de dominio agnóstico
-        ComprobanteTipo tipo = ComprobanteTipo.valueOf(command.tipo().toUpperCase().trim());
-        Moneda moneda = "USD".equalsIgnoreCase(command.moneda()) ? Moneda.USD : Moneda.PEN;
+        // 2. Map command to agnostic domain model
+        InvoiceType type = InvoiceType.valueOf(command.type().toUpperCase().trim());
+        Currency currency = "USD".equalsIgnoreCase(command.currency()) ? Currency.USD : Currency.PEN;
 
-        List<ItemComprobante> items = command.items().stream()
+        List<InvoiceItem> items = command.items().stream()
                 .map(this::toItemModel)
                 .collect(Collectors.toList());
 
-        ComprobanteParaDeclarar comprobante = new ComprobanteParaDeclarar(
+        InvoiceToDeclare invoice = new InvoiceToDeclare(
                 command.tenantId(),
-                command.comprobanteId(),
-                tipo,
-                command.serie(),
-                command.numero(),
-                command.clienteTipoDoc(),
-                command.clienteNumDoc(),
-                command.clienteDenominacion(),
-                command.clienteDireccion(),
-                command.clienteEmail(),
-                moneda,
-                command.totalGravada(),
-                command.totalIgv(),
+                command.invoiceId(),
+                type,
+                command.series(),
+                command.number(),
+                command.customerDocType(),
+                command.customerDocNumber(),
+                command.customerLegalName(),
+                command.customerAddress(),
+                command.customerEmail(),
+                currency,
+                command.totalTaxable(),
+                command.totalTax(),
                 command.total(),
                 items,
-                command.fechaEmision()
+                command.issueDate()
         );
 
-        // 2 bis. Reservar la numeracion ANTES de contactar al proveedor. La
-        // numeracion es la identidad fiscal del comprobante: si dos emisiones
-        // simultaneas comparten serie y numero, la autoridad fiscal ve un
-        // duplicado. Comprobarlo despues del contacto seria tarde.
+        // 2 bis. Reserve sequential numbering BEFORE contacting external tax authority
         unitOfWork.runInTransaction(() -> voucherNumberingPort.reserve(
-                command.tenantId(), command.serie(), command.numero(), command.comprobanteId()));
+                command.tenantId(), command.series(), command.number(), command.invoiceId()));
 
-        // 3. Emisión hacia PSE / SUNAT con tolerancia a fallos.
-        //
-        // La llamada al proveedor no ocurre dentro del limite transaccional:
-        // es una llamada externa, lenta y fuera del control del sistema, y
-        // mantener una transaccion abierta mientras espera bloquearia
-        // recursos de la base de datos sin ninguna garantia.
-        ResultadoDeclaracion resultado;
-        boolean emitido = false;
+        // 3. Declaration towards PSE / SUNAT with outbox fault tolerance
+        DeclarationResult declarationResult;
+        boolean emitted = false;
         try {
-            resultado = emisorTributarioPort.emitirComprobante(comprobante);
-            emitido = true;
+            declarationResult = taxAuthorityEmitterPort.emitInvoice(invoice);
+            emitted = true;
         } catch (Exception e) {
-            log.warn("Fallo al comunicar con PSE/SUNAT ({}: {}). Derivando a cola de reintento.", command.comprobanteId(), e.getMessage());
+            log.warn("Communication failure with PSE/SUNAT ({}: {}). Enqueuing to retry outbox.", command.invoiceId(), e.getMessage());
 
-            // El registro del intento y el encolado del reintento se
-            // confirman juntos: un intento sin tarea de reintento es un
-            // cobro perdido, y una tarea de reintento sin su intento es un
-            // reenvio sin trazabilidad.
             unitOfWork.runInTransaction(() -> {
-                // El numero de intento es la PROGRESION real: la bitacora
-                // dice cuantas veces se ha intentado, y no siempre "a la
-                // primera".
-                int numeroDeIntento = 1 + attemptRepositoryPort.countAttempts(
-                        command.tenantId(), ProviderType.APISUNAT, "EMIT_VOUCHER", command.comprobanteId());
+                int attemptCount = 1 + attemptRepositoryPort.countAttempts(
+                        command.tenantId(), ProviderType.APISUNAT, "EMIT_VOUCHER", command.invoiceId());
 
                 attemptRepositoryPort.save(IntegrationAttempt.retry(
                         command.tenantId(),
                         ProviderType.APISUNAT,
                         "EMIT_VOUCHER",
-                        command.comprobanteId(),
-                        numeroDeIntento,
+                        command.invoiceId(),
+                        attemptCount,
                         e.getMessage()
                 ));
 
-                // Guardar en cola de reintentos (Exponential backoff con payload completo serializado)
                 retryQueueRepositoryPort.save(RetryTask.create(
                         command.tenantId(),
                         ProviderType.APISUNAT,
                         "EMIT_VOUCHER",
-                        command.comprobanteId(),
-                        serializeCommand(command),MAX_INTENTOS_REINTENTO
+                        command.invoiceId(),
+                        serializeCommand(command),
+                        MAX_RETRY_ATTEMPTS
                 ));
             });
 
-            resultado = ResultadoDeclaracion.pendiente("Servicio tributario no disponible temporalmente. Comprobante encolado para reintento automático.");
+            declarationResult = DeclarationResult.pending("Tax authority temporarily unavailable. Invoice enqueued for automatic retry.");
         }
 
-        if (emitido) {
-            // El intento correcto se consigna SOLO si se ha contactado con el
-            // proveedor: un intento correcto sin llamada es una operacion
-            // que no ocurrio.
+        if (emitted) {
             unitOfWork.runInTransaction(() -> {
-                int numeroDeIntento = 1 + attemptRepositoryPort.countAttempts(
-                        command.tenantId(), ProviderType.APISUNAT, "EMIT_VOUCHER", command.comprobanteId());
+                int attemptCount = 1 + attemptRepositoryPort.countAttempts(
+                        command.tenantId(), ProviderType.APISUNAT, "EMIT_VOUCHER", command.invoiceId());
                 attemptRepositoryPort.save(IntegrationAttempt.ok(
                         command.tenantId(),
                         ProviderType.APISUNAT,
                         "EMIT_VOUCHER",
-                        command.comprobanteId(),
-                        numeroDeIntento
+                        command.invoiceId(),
+                        attemptCount
                 ));
             });
         }
 
-        // 4. Guardar registro de idempotencia
-        ComprobanteResult finalResult = new ComprobanteResult(
-                command.comprobanteId(),
-                resultado.exitoso(),
-                resultado.estadoSunat(),
-                resultado.codigoRespuestaSunat(),
-                resultado.mensajeSunat(),
-                resultado.pdfUrl(),
-                resultado.xmlUrl(),
-                resultado.cdrUrl(),
-                resultado.hashCdr(),
+        // 4. Store idempotency record
+        InvoiceResult finalResult = new InvoiceResult(
+                command.invoiceId(),
+                declarationResult.successful(),
+                declarationResult.sunatStatus(),
+                declarationResult.sunatResponseCode(),
+                declarationResult.sunatMessage(),
+                declarationResult.pdfUrl(),
+                declarationResult.xmlUrl(),
+                declarationResult.cdrUrl(),
+                declarationResult.cdrHash(),
                 false
         );
 
@@ -254,173 +232,164 @@ public class ElectronicInvoicingService implements EmitirComprobanteUseCase {
     }
 
     @Override
-    public ComprobanteResult anularComprobante(UUID tenantId, UUID comprobanteId, String tipo, String serie, int numero, String motivo) {
-        if (tenantId == null || comprobanteId == null) {
-            throw new IllegalArgumentException("tenantId y comprobanteId son obligatorios");
+    public InvoiceResult voidInvoice(UUID tenantId, UUID invoiceId, String type, String series, int number, String reason) {
+        if (tenantId == null || invoiceId == null) {
+            throw new IllegalArgumentException("tenantId and invoiceId are required");
         }
-        log.info("[APISUNAT] Anulando comprobante {} {}-{} para tenant {}", tipo, serie, numero, tenantId);
+        log.info("[APISUNAT] Voiding invoice {} {}-{} for tenant {}", type, series, number, tenantId);
 
-        ResultadoDeclaracion resultado;
+        DeclarationResult declarationResult;
         try {
-            resultado = emisorTributarioPort.anularComprobante(tipo, serie, numero, motivo);
+            declarationResult = taxAuthorityEmitterPort.voidInvoice(type, series, number, reason);
             unitOfWork.runInTransaction(() -> attemptRepositoryPort.save(IntegrationAttempt.ok(
                     tenantId,
                     ProviderType.APISUNAT,
                     "VOID_VOUCHER",
-                    comprobanteId,
+                    invoiceId,
                     1
             )));
         } catch (Exception e) {
-            // El proveedor NO esta disponible: el rechazo es TRANSITORIO. La
-            // anulacion se reprograma, en lugar de devolverse al cliente como
-            // un rechazo definitivo: el comprobante sigue sin anular, y el
-            // taller tiene que poder reintentarlo.
-            log.warn("Error al anular comprobante en APISUNAT ({}): {}", comprobanteId, e.getMessage());
+            log.warn("Error voiding voucher in APISUNAT ({}): {}", invoiceId, e.getMessage());
 
             unitOfWork.runInTransaction(() -> {
-                int numeroDeIntento = 1 + attemptRepositoryPort.countAttempts(
-                        tenantId, ProviderType.APISUNAT, "VOID_VOUCHER", comprobanteId);
+                int attemptCount = 1 + attemptRepositoryPort.countAttempts(
+                        tenantId, ProviderType.APISUNAT, "VOID_VOUCHER", invoiceId);
 
                 attemptRepositoryPort.save(IntegrationAttempt.retry(
                         tenantId,
                         ProviderType.APISUNAT,
                         "VOID_VOUCHER",
-                        comprobanteId,
-                        numeroDeIntento,
+                        invoiceId,
+                        attemptCount,
                         e.getMessage()));
 
                 retryQueueRepositoryPort.save(RetryTask.create(
                         tenantId,
                         ProviderType.APISUNAT,
                         "VOID_VOUCHER",
-                        comprobanteId,
-                        "{\"tipo\":\"" + tipo + "\",\"serie\":\"" + serie + "\",\"numero\":" + numero
-                                + ",\"motivo\":\"" + (motivo != null ? motivo : "") + "\"}",
+                        invoiceId,
+                        "{\"tipo\":\"" + type + "\",\"serie\":\"" + series + "\",\"numero\":" + number
+                                + ",\"motivo\":\"" + (reason != null ? reason : "") + "\"}",
                         5));
             });
 
-            resultado = ResultadoDeclaracion.pendiente(
-                    "El servicio tributario no esta disponible: la anulacion se ha reprogramado");
+            declarationResult = DeclarationResult.pending(
+                    "Tax service temporarily unavailable: voiding operation enqueued for retry");
         }
 
-        return new ComprobanteResult(
-                comprobanteId,
-                resultado.exitoso(),
-                resultado.estadoSunat(),
-                resultado.codigoRespuestaSunat(),
-                resultado.mensajeSunat(),
-                resultado.pdfUrl(),
-                resultado.xmlUrl(),
-                resultado.cdrUrl(),
-                resultado.hashCdr(),
+        return new InvoiceResult(
+                invoiceId,
+                declarationResult.successful(),
+                declarationResult.sunatStatus(),
+                declarationResult.sunatResponseCode(),
+                declarationResult.sunatMessage(),
+                declarationResult.pdfUrl(),
+                declarationResult.xmlUrl(),
+                declarationResult.cdrUrl(),
+                declarationResult.cdrHash(),
                 false
         );
     }
 
     @Override
-    public ComprobanteResult consultarEstadoComprobante(UUID tenantId, UUID comprobanteId, String tipo, String serie, int numero) {
-        if (tenantId == null || comprobanteId == null) {
-            throw new IllegalArgumentException("tenantId y comprobanteId son obligatorios");
+    public InvoiceResult queryInvoiceStatus(UUID tenantId, UUID invoiceId, String type, String series, int number) {
+        if (tenantId == null || invoiceId == null) {
+            throw new IllegalArgumentException("tenantId and invoiceId are required");
         }
-        log.info("[APISUNAT] Consultando estado de comprobante {} {}-{} para tenant {}", tipo, serie, numero, tenantId);
+        log.info("[APISUNAT] Querying voucher status {} {}-{} for tenant {}", type, series, number, tenantId);
 
-        ResultadoDeclaracion resultado;
+        DeclarationResult declarationResult;
         try {
-            resultado = emisorTributarioPort.consultarEstadoComprobante(tipo, serie, numero);
+            declarationResult = taxAuthorityEmitterPort.queryInvoiceStatus(type, series, number);
         } catch (Exception e) {
-            log.warn("Error al consultar estado en APISUNAT ({}): {}", comprobanteId, e.getMessage());
-            resultado = ResultadoDeclaracion.rechazado("500", "Fallo al consultar estado con APISUNAT: " + e.getMessage());
+            log.warn("Error querying voucher status in APISUNAT ({}): {}", invoiceId, e.getMessage());
+            declarationResult = DeclarationResult.rejected("500", "Failed to query status with APISUNAT: " + e.getMessage());
         }
 
-        return new ComprobanteResult(
-                comprobanteId,
-                resultado.exitoso(),
-                resultado.estadoSunat(),
-                resultado.codigoRespuestaSunat(),
-                resultado.mensajeSunat(),
-                resultado.pdfUrl(),
-                resultado.xmlUrl(),
-                resultado.cdrUrl(),
-                resultado.hashCdr(),
+        return new InvoiceResult(
+                invoiceId,
+                declarationResult.successful(),
+                declarationResult.sunatStatus(),
+                declarationResult.sunatResponseCode(),
+                declarationResult.sunatMessage(),
+                declarationResult.pdfUrl(),
+                declarationResult.xmlUrl(),
+                declarationResult.cdrUrl(),
+                declarationResult.cdrHash(),
                 false
         );
     }
 
-    private ItemComprobante toItemModel(ItemComprobanteCommand cmd) {
-        return new ItemComprobante(
-                cmd.unidadMedida(),
-                cmd.descripcion(),
-                cmd.cantidad(),
-                cmd.valorUnitario(),
-                cmd.precioUnitario(),
-                cmd.igv(),
+    private InvoiceItem toItemModel(InvoiceItemCommand cmd) {
+        return new InvoiceItem(
+                cmd.unitOfMeasure(),
+                cmd.description(),
+                cmd.quantity(),
+                cmd.unitValue(),
+                cmd.unitPrice(),
+                cmd.taxAmount(),
                 cmd.total()
         );
     }
 
-    /**
-     * La carga util de la peticion de emision. Es lo que se huella para
-     * distinguir el reintento del mismo comprobante de otra emision con la
-     * misma clave.
-     */
-    private String cargaUtilDe(EmitirComprobanteCommand command) {
+    private String buildPayloadFingerprintSource(EmitInvoiceCommand command) {
         return String.join("|",
                 String.valueOf(command.tenantId()),
-                String.valueOf(command.comprobanteId()),
-                String.valueOf(command.tipo()),
-                String.valueOf(command.serie()),
-                String.valueOf(command.numero()),
-                String.valueOf(command.clienteNumDoc()),
+                String.valueOf(command.invoiceId()),
+                String.valueOf(command.type()),
+                String.valueOf(command.series()),
+                String.valueOf(command.number()),
+                String.valueOf(command.customerDocNumber()),
                 String.valueOf(command.total()),
-                String.valueOf(command.moneda()));
+                String.valueOf(command.currency()));
     }
 
-    private String serializeResult(ComprobanteResult result) {
+    private String serializeResult(InvoiceResult result) {
         try {
             return objectMapper.writeValueAsString(result);
         } catch (Exception e) {
-            throw new RuntimeException("Error al serializar resultado de comprobante", e);
+            throw new RuntimeException("Error serializing invoice result", e);
         }
     }
 
-    private ComprobanteResult deserializeResult(UUID comprobanteId, String payload, boolean fromCache) {
+    private InvoiceResult deserializeResult(UUID invoiceId, String payload, boolean fromCache) {
         if (payload == null || payload.isBlank()) {
-            return new ComprobanteResult(comprobanteId, true, "PENDIENTE_SUNAT", "0", "En proceso", null, null, null, null, fromCache);
+            return new InvoiceResult(invoiceId, true, "PENDIENTE_SUNAT", "0", "Processing", null, null, null, null, fromCache);
         }
         try {
             com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(payload);
-            boolean exitoso = root.path("exitoso").asBoolean(true);
-            String estado = root.path("estadoSunat").asText(root.path("estado").asText("ACEPTADA"));
-            String codigo = root.path("codigoRespuestaSunat").asText(root.path("codigo").asText("0"));
-            String mensaje = root.path("mensajeSunat").asText(root.path("mensaje").asText("Comprobante procesado"));
+            boolean successful = root.path("successful").asBoolean(root.path("exitoso").asBoolean(true));
+            String status = root.path("sunatStatus").asText(root.path("estadoSunat").asText(root.path("estado").asText("ACEPTADA")));
+            String code = root.path("sunatResponseCode").asText(root.path("codigoRespuestaSunat").asText(root.path("codigo").asText("0")));
+            String message = root.path("sunatMessage").asText(root.path("mensajeSunat").asText(root.path("mensaje").asText("Comprobante procesado")));
             String pdfUrl = root.path("pdfUrl").asText(null);
             String xmlUrl = root.path("xmlUrl").asText(null);
             String cdrUrl = root.path("cdrUrl").asText(null);
-            String hashCdr = root.path("hashCdr").asText(null);
+            String cdrHash = root.path("cdrHash").asText(root.path("hashCdr").asText(null));
 
-            return new ComprobanteResult(
-                    comprobanteId,
-                    exitoso,
-                    estado,
-                    codigo,
-                    mensaje,
+            return new InvoiceResult(
+                    invoiceId,
+                    successful,
+                    status,
+                    code,
+                    message,
                     pdfUrl,
                     xmlUrl,
                     cdrUrl,
-                    hashCdr,
+                    cdrHash,
                     fromCache
             );
         } catch (Exception e) {
-            log.warn("Error al deserializar resultado cacheado: {}", e.getMessage());
-            return new ComprobanteResult(comprobanteId, true, "PENDIENTE_SUNAT", "0", "En proceso", null, null, null, null, fromCache);
+            log.warn("Error deserializing cached invoice result: {}", e.getMessage());
+            return new InvoiceResult(invoiceId, true, "PENDIENTE_SUNAT", "0", "Processing", null, null, null, null, fromCache);
         }
     }
 
-    private String serializeCommand(EmitirComprobanteCommand cmd) {
+    private String serializeCommand(EmitInvoiceCommand cmd) {
         try {
             return objectMapper.writeValueAsString(cmd);
         } catch (Exception e) {
-            throw new RuntimeException("Error al serializar comando para reintento", e);
+            throw new RuntimeException("Error serializing command for retry outbox", e);
         }
     }
 }

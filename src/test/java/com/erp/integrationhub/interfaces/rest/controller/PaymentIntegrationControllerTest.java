@@ -1,7 +1,7 @@
 package com.erp.integrationhub.interfaces.rest.controller;
 
-import com.erp.integrationhub.application.dto.result.PagoResult;
-import com.erp.integrationhub.application.usecase.ProcesarPagoUseCase;
+import com.erp.integrationhub.application.dto.result.PaymentResult;
+import com.erp.integrationhub.application.usecase.ProcessPaymentUseCase;
 import com.erp.integrationhub.interfaces.rest.advice.GlobalRestExceptionHandler;
 import com.erp.integrationhub.support.AuthenticatedUserContext;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,11 +28,11 @@ class PaymentIntegrationControllerTest {
     private MockMvc mockMvc;
 
     @Mock
-    private ProcesarPagoUseCase procesarPagoUseCase;
+    private ProcessPaymentUseCase processPaymentUseCase;
 
     @BeforeEach
     void setUp() {
-        PaymentIntegrationController controller = new PaymentIntegrationController(procesarPagoUseCase);
+        PaymentIntegrationController controller = new PaymentIntegrationController(processPaymentUseCase);
         AuthenticatedUserContext.asTenant(UUID.randomUUID());
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalRestExceptionHandler())
@@ -46,7 +46,7 @@ class PaymentIntegrationControllerTest {
         AuthenticatedUserContext.asTenant(tenantId);
         UUID paymentId = UUID.randomUUID();
 
-        PagoResult result = new PagoResult(
+        PaymentResult result = new PaymentResult(
                 paymentId,
                 true,
                 "PAID",
@@ -56,7 +56,7 @@ class PaymentIntegrationControllerTest {
                 null,
                 false
         );
-        when(procesarPagoUseCase.procesarPago(any())).thenReturn(result);
+        when(processPaymentUseCase.processPayment(any())).thenReturn(result);
 
         String jsonPayload = """
                 {

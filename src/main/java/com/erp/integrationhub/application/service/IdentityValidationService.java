@@ -1,73 +1,76 @@
 package com.erp.integrationhub.application.service;
 
-import com.erp.integrationhub.application.dto.command.ConsultarPlacaCommand;
-import com.erp.integrationhub.application.dto.command.ConsultarRucCommand;
-import com.erp.integrationhub.application.dto.result.PlacaResult;
+import com.erp.integrationhub.application.dto.command.QueryPlateCommand;
+import com.erp.integrationhub.application.dto.command.QueryRucCommand;
+import com.erp.integrationhub.application.dto.result.PlateResult;
 import com.erp.integrationhub.application.dto.result.RucResult;
-import com.erp.integrationhub.application.usecase.ConsultarPlacaUseCase;
-import com.erp.integrationhub.application.usecase.ConsultarRucUseCase;
-import com.erp.integrationhub.domain.model.ConsultaPlacaResult;
-import com.erp.integrationhub.domain.model.ConsultaRucResult;
+import com.erp.integrationhub.application.usecase.QueryPlateUseCase;
+import com.erp.integrationhub.application.usecase.QueryRucUseCase;
 import com.erp.integrationhub.domain.model.IntegrationAttempt;
 import com.erp.integrationhub.domain.model.ProviderType;
+import com.erp.integrationhub.domain.model.QueryPlateResult;
+import com.erp.integrationhub.domain.model.QueryRucResult;
 import com.erp.integrationhub.domain.port.IdentityCachePort;
+import com.erp.integrationhub.domain.port.IdentityValidatorPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.UnitOfWork;
-import com.erp.integrationhub.domain.port.ValidadorIdentidadPort;
-import com.erp.integrationhub.domain.port.ValidadorVehicularPort;
+import com.erp.integrationhub.domain.port.VehicleValidatorPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.UUID;
 
-public class IdentityValidationService implements ConsultarRucUseCase, ConsultarPlacaUseCase {
+/**
+ * Application service for taxpayer (RUC) and vehicle plate identity validation.
+ */
+public class IdentityValidationService implements QueryRucUseCase, QueryPlateUseCase {
 
     private static final Logger log = LoggerFactory.getLogger(IdentityValidationService.class);
 
-    private final ValidadorIdentidadPort validadorIdentidadPort;
-    private final ValidadorVehicularPort validadorVehicularPort;
+    private final IdentityValidatorPort identityValidatorPort;
+    private final VehicleValidatorPort vehicleValidatorPort;
     private final IdentityCachePort identityCachePort;
     private final IntegrationAttemptRepositoryPort attemptRepositoryPort;
     private final UnitOfWork unitOfWork;
 
     public IdentityValidationService(
-            ValidadorIdentidadPort validadorIdentidadPort,
-            ValidadorVehicularPort validadorVehicularPort,
+            IdentityValidatorPort identityValidatorPort,
+            VehicleValidatorPort vehicleValidatorPort,
             IdentityCachePort identityCachePort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             UnitOfWork unitOfWork) {
-        this.validadorIdentidadPort = validadorIdentidadPort;
-        this.validadorVehicularPort = validadorVehicularPort;
+        this.identityValidatorPort = identityValidatorPort;
+        this.vehicleValidatorPort = vehicleValidatorPort;
         this.identityCachePort = identityCachePort;
         this.attemptRepositoryPort = attemptRepositoryPort;
         this.unitOfWork = unitOfWork;
     }
 
-
     @Override
-    public RucResult consultarRuc(ConsultarRucCommand command) {
+    public RucResult queryRuc(QueryRucCommand command) {
         if (command.ruc() == null || command.ruc().trim().length() != 11) {
-            throw new IllegalArgumentException("El RUC debe tener 11 dígitos");
+            throw new IllegalArgumentException("RUC must contain exactly 11 digits");
         }
 
         String ruc = command.ruc().trim();
-        Optional<ConsultaRucResult> cached = identityCachePort != null ? identityCachePort.getRuc(ruc) : Optional.empty();
+        Optional<QueryRucResult> cached = identityCachePort != null ? identityCachePort.getRuc(ruc) : Optional.empty();
         if (cached.isPresent()) {
-            log.debug("RUC {} obtenido de la caché (Redis / L1)", ruc);
+            log.debug("RUC {} retrieved from cache (Redis / L1)", ruc);
             return toRucResult(cached.get(), true);
         }
 
-        ConsultaRucResult result;
+        QueryRucResult result;
         try {
-            result = validadorIdentidadPort.consultarRuc(ruc);
-            if (result.esValido() && identityCachePort != null) {
+            result = identityValidatorPort.queryRuc(ruc);
+            if (result.valid() && identityCachePort != null) {
                 identityCachePort.putRuc(ruc, result);
             }
             logAttempt(command.tenantId(), ProviderType.CHEQUEA, "VALIDATE_RUC", ruc, null);
         } catch (Exception e) {
-            log.warn("Fallo al validar RUC {} con proveedor externo: {}", ruc, e.getMessage());
-            result = ConsultaRucResult.invalido(ruc);
+            log.warn("Failed to validate RUC {} with external provider: {}", ruc, e.getMessage());
+            result = QueryRucResult.invalid(ruc);
             logAttempt(command.tenantId(), ProviderType.CHEQUEA, "VALIDATE_RUC", ruc, e.getMessage());
         }
 
@@ -75,78 +78,77 @@ public class IdentityValidationService implements ConsultarRucUseCase, Consultar
     }
 
     @Override
-    public PlacaResult consultarPlaca(ConsultarPlacaCommand command) {
-        if (command.placa() == null || command.placa().trim().isEmpty()) {
-            throw new IllegalArgumentException("La placa vehicular es obligatoria");
+    public PlateResult queryPlate(QueryPlateCommand command) {
+        if (command.plate() == null || command.plate().trim().isEmpty()) {
+            throw new IllegalArgumentException("Vehicle license plate is required");
         }
 
-        String placa = command.placa().trim().toUpperCase().replace("-", "");
-        Optional<ConsultaPlacaResult> cached = identityCachePort != null ? identityCachePort.getPlaca(placa) : Optional.empty();
+        String plate = command.plate().trim().toUpperCase().replace("-", "");
+        Optional<QueryPlateResult> cached = identityCachePort != null ? identityCachePort.getPlaca(plate) : Optional.empty();
         if (cached.isPresent()) {
-            log.debug("Placa {} obtenida de la caché (Redis / L1)", placa);
-            return toPlacaResult(cached.get(), true);
+            log.debug("Vehicle plate {} retrieved from cache (Redis / L1)", plate);
+            return toPlateResult(cached.get(), true);
         }
 
-        ConsultaPlacaResult result;
+        QueryPlateResult result;
         try {
-            result = validadorVehicularPort.consultarPlaca(placa);
-            if (result.esValido() && identityCachePort != null) {
-                identityCachePort.putPlaca(placa, result);
+            result = vehicleValidatorPort.queryPlate(plate);
+            if (result.valid() && identityCachePort != null) {
+                identityCachePort.putPlaca(plate, result);
             }
-            logAttempt(command.tenantId(), ProviderType.SUNARP, "VALIDATE_PLATE", placa, null);
+            logAttempt(command.tenantId(), ProviderType.SUNARP, "VALIDATE_PLATE", plate, null);
         } catch (Exception e) {
-            log.warn("Fallo al consultar placa {} con proveedor externo: {}", placa, e.getMessage());
-            result = ConsultaPlacaResult.invalido(placa);
-            logAttempt(command.tenantId(), ProviderType.SUNARP, "VALIDATE_PLATE", placa, e.getMessage());
+            log.warn("Failed to query vehicle plate {} with external provider: {}", plate, e.getMessage());
+            result = QueryPlateResult.invalid(plate);
+            logAttempt(command.tenantId(), ProviderType.SUNARP, "VALIDATE_PLATE", plate, e.getMessage());
         }
 
-        return toPlacaResult(result, false);
+        return toPlateResult(result, false);
     }
 
     private void logAttempt(UUID tenantId, ProviderType provider, String op, String referenceKey, String error) {
         UUID effectiveTenant = tenantId;
         UUID referenceId = (referenceKey != null && !referenceKey.isBlank())
-                ? UUID.nameUUIDFromBytes(referenceKey.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                ? UUID.nameUUIDFromBytes(referenceKey.getBytes(StandardCharsets.UTF_8))
                 : UUID.randomUUID();
 
         unitOfWork.runInTransaction(() -> {
-            // El numero de intento es la progresion real, no una constante.
-            int numeroDeIntento = 1 + attemptRepositoryPort.countAttempts(
+            int attemptNumber = 1 + attemptRepositoryPort.countAttempts(
                     effectiveTenant, provider, op, referenceId);
             attemptRepositoryPort.save(error == null
-                    ? IntegrationAttempt.ok(effectiveTenant, provider, op, referenceId, numeroDeIntento)
-                    : IntegrationAttempt.retry(effectiveTenant, provider, op, referenceId, numeroDeIntento, error)
+                    ? IntegrationAttempt.ok(effectiveTenant, provider, op, referenceId, attemptNumber)
+                    : IntegrationAttempt.retry(effectiveTenant, provider, op, referenceId, attemptNumber, error)
             );
         });
     }
 
-    private RucResult toRucResult(ConsultaRucResult r, boolean fromCache) {
+    private RucResult toRucResult(QueryRucResult r, boolean fromCache) {
         return new RucResult(
                 r.ruc(),
-                r.razonSocial(),
-                r.estado(),
-                r.condicion(),
-                r.direccionFiscal(),
-                r.departamento(),
-                r.provincia(),
-                r.distrito(),
+                r.legalName(),
+                r.status(),
+                r.condition(),
+                r.fiscalAddress(),
+                r.department(),
+                r.province(),
+                r.district(),
                 r.ubigeo(),
-                r.esValido(),
+                r.valid(),
                 fromCache
         );
     }
 
-    private PlacaResult toPlacaResult(ConsultaPlacaResult p, boolean fromCache) {
-        return new PlacaResult(
-                p.placa(),
-                p.marca(),
-                p.modelo(),
+    private PlateResult toPlateResult(QueryPlateResult p, boolean fromCache) {
+        return new PlateResult(
+                p.plate(),
+                p.brand(),
+                p.model(),
                 p.vin(),
-                p.numeroMotor(),
-                p.anioFabricacion(),
+                p.engineNumber(),
+                p.manufactureYear(),
                 p.color(),
-                p.combustible(),
-                p.esValido(),
+                p.fuelType(),
+                p.valid(),
                 fromCache
         );
     }

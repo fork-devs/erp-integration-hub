@@ -1,230 +1,213 @@
 package com.erp.integrationhub.application.service;
 
-import com.erp.integrationhub.application.dto.command.ProcesarPagoCommand;
+import com.erp.integrationhub.application.dto.command.ProcessPaymentCommand;
+import com.erp.integrationhub.application.dto.result.PaymentResult;
 import com.erp.integrationhub.application.logging.SecurityEventLogger;
-import com.erp.integrationhub.application.dto.result.PagoResult;
-import com.erp.integrationhub.application.usecase.ProcesarPagoUseCase;
+import com.erp.integrationhub.application.usecase.ProcessPaymentUseCase;
 import com.erp.integrationhub.domain.exception.IdempotencyConflictException;
+import com.erp.integrationhub.domain.model.ChargeRequest;
+import com.erp.integrationhub.domain.model.Currency;
 import com.erp.integrationhub.domain.model.IdempotencyKeyState;
 import com.erp.integrationhub.domain.model.IdempotencyRecord;
 import com.erp.integrationhub.domain.model.IdempotencyScope;
 import com.erp.integrationhub.domain.model.IntegrationAttempt;
-import com.erp.integrationhub.domain.model.Moneda;
+import com.erp.integrationhub.domain.model.PaymentOutcome;
 import com.erp.integrationhub.domain.model.ProviderType;
-import com.erp.integrationhub.domain.model.ResultadoPago;
-import com.erp.integrationhub.domain.model.SolicitudCobro;
-import com.erp.integrationhub.domain.util.PayloadFingerprint;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
-import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
+import com.erp.integrationhub.domain.port.PaymentGatewayPort;
 import com.erp.integrationhub.domain.port.UnitOfWork;
+import com.erp.integrationhub.domain.util.PayloadFingerprint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Optional;
+import java.util.UUID;
 
-public class PaymentIntegrationService implements ProcesarPagoUseCase {
+/**
+ * Application service for processing credit/debit card payments via external gateway.
+ *
+ * <p>Enforces strict idempotency claiming, payload fingerprint verification, and atomic
+ * state transitions to ensure double-charging never occurs.
+ */
+public class PaymentIntegrationService implements ProcessPaymentUseCase {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentIntegrationService.class);
 
-    private final PasarelaDePagoPort pasarelaDePagoPort;
+    private final PaymentGatewayPort paymentGatewayPort;
     private final IdempotencyRepositoryPort idempotencyRepositoryPort;
     private final IntegrationAttemptRepositoryPort attemptRepositoryPort;
     private final UnitOfWork unitOfWork;
 
     public PaymentIntegrationService(
-            PasarelaDePagoPort pasarelaDePagoPort,
+            PaymentGatewayPort paymentGatewayPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             UnitOfWork unitOfWork) {
-        this.pasarelaDePagoPort = pasarelaDePagoPort;
+        this.paymentGatewayPort = paymentGatewayPort;
         this.idempotencyRepositoryPort = idempotencyRepositoryPort;
         this.attemptRepositoryPort = attemptRepositoryPort;
         this.unitOfWork = unitOfWork;
     }
 
     @Override
-    public PagoResult procesarPago(ProcesarPagoCommand command) {
+    public PaymentResult processPayment(ProcessPaymentCommand command) {
         if (command.tenantId() == null || command.paymentId() == null || command.idempotencyKey() == null) {
-            throw new IllegalArgumentException("tenantId, paymentId e idempotencyKey son obligatorios");
+            throw new IllegalArgumentException("tenantId, paymentId, and idempotencyKey are required");
         }
 
-        // 1. Huella de la carga util. Es lo que distingue la peticion que se
-        // repite de otra peticion con la misma clave.
-        String huella = PayloadFingerprint.of(cargaUtilDe(command));
+        // 1. Calculate cryptographic request payload fingerprint
+        String fingerprint = PayloadFingerprint.of(buildPayloadFingerprintSource(command));
 
-        // 2. Estado de la clave. Si ya hay un resultado DEFINITIVO, se
-        // devuelve; si la clave esta EN CURSO, otra peticion la reclamo y no
-        // hay que volver a llamar al proveedor; si esta LIBERADA, se puede
-        // reintentar.
+        // 2. Inspect existing idempotency record
         Optional<IdempotencyRecord> existing = idempotencyRepositoryPort.findByTenantAndScopeAndKey(
                 command.tenantId(), IdempotencyScope.PAYMENT, command.idempotencyKey()
         );
 
         if (existing.isPresent()) {
-            IdempotencyRecord registro = existing.get();
+            IdempotencyRecord record = existing.get();
 
-            if (!registro.mismaPeticion(huella)) {
-                // La misma clave con otra carga util NO es la misma peticion.
-                // Devolver el resultado anterior seria no cobrar la segunda.
+            if (!record.isSameRequest(fingerprint)) {
                 throw new IdempotencyConflictException(
-                        "La clave de idempotencia ya se uso para una peticion distinta");
+                        "Idempotency key has already been used with a different request payload");
             }
 
-            if (registro.getState().resultadoDefinitivo()) {
-                log.info("Cobro idempotente detectado para pago {}. Retornando resultado almacenado.",
-                        command.paymentId());
-                return deserializeResult(command.paymentId(), registro.getResponsePayload(), true);
+            if (record.getState().isDefinitiveResult()) {
+                log.info("Idempotent payment detected for {}. Returning stored result.", command.paymentId());
+                return deserializeResult(command.paymentId(), record.getResponsePayload(), true);
             }
 
-            if (registro.getState() == IdempotencyKeyState.IN_PROGRESS) {
-                // La clave esta reclamada: otra peticion esta contacting al
-                // proveedor con ella. Volver a llamar seria cobrar dos veces.
+            if (record.getState() == IdempotencyKeyState.IN_PROGRESS) {
                 throw new IdempotencyConflictException(
-                        "La operacion con esta clave de idempotencia ya esta en curso");
+                        "Operation with this idempotency key is already in progress");
             }
 
-            // LIBERADA: el intento anterior fallo de forma transitoria. Se
-            // vuelve a intentar.
-            log.info("Reintentando el cobro {} con una clave de idempotencia liberada.", command.paymentId());
+            log.info("Retrying payment {} with previously released idempotency key.", command.paymentId());
         }
 
-        // 2. Mapeo a entidad de dominio
-        Moneda moneda = "USD".equalsIgnoreCase(command.moneda()) ? Moneda.USD : Moneda.PEN;
-        SolicitudCobro solicitud = new SolicitudCobro(
+        // 3. Map to domain entity and claim idempotency key before contacting provider
+        Currency currency = "USD".equalsIgnoreCase(command.currency()) ? Currency.USD : Currency.PEN;
+        ChargeRequest chargeRequest = new ChargeRequest(
                 command.tenantId(),
                 command.paymentId(),
-                command.monto(),
-                moneda,
-                command.tokenTarjeta(),
-                command.descripcion(),
-                command.clienteEmail(),
+                command.amount(),
+                currency,
+                command.cardToken(),
+                command.description(),
+                command.customerEmail(),
                 command.idempotencyKey()
         );
 
-        // 3. RECLAMAR la clave, ANTES de contactar al proveedor. La
-        // unicidad de (taller, alcance, clave) la impone la base de datos:
-        // dos peticiones simultaneas con la misma clave no pueden reclamar
-        // las dos, y la que pierde NO llama al proveedor. Sin esta
-        // reclamacion previa, dos peticiones simultaneas cobraban dos veces.
         final IdempotencyRecord claimed;
         try {
             claimed = unitOfWork.callInTransaction(() -> idempotencyRepositoryPort.claim(
-                    command.tenantId(), IdempotencyScope.PAYMENT, command.idempotencyKey(), huella));
+                    command.tenantId(), IdempotencyScope.PAYMENT, command.idempotencyKey(), fingerprint));
         } catch (IdempotencyConflictException e) {
-            log.info("La clave de idempotencia {} ya esta reclamada: no se vuelve a cobrar.",
+            log.info("Idempotency key {} is already claimed: preventing duplicate charge.",
                     command.idempotencyKey());
             throw e;
         }
 
-        // 4. Procesar cobro en pasarela (Stripe). La llamada al proveedor NO
-        // ocurre dentro de la transaccion: es una llamada externa, lenta y
-        // fuera del control del sistema, y mantener abierta una transaccion
-        // mientras espera bloquearia recursos de la base de datos sin
-        // ninguna garantia.
-        ResultadoPago resultadoDelProveedor;
+        // 4. Invoke external payment gateway outside transaction boundary
+        PaymentOutcome gatewayOutcome;
         try {
-            resultadoDelProveedor = pasarelaDePagoPort.procesarCobro(solicitud);
+            gatewayOutcome = paymentGatewayPort.processCharge(chargeRequest);
         } catch (Exception e) {
-            log.error("Fallo al procesar cobro en pasarela: {}", e.getMessage());
-            resultadoDelProveedor = ResultadoPago.fallido(e.getMessage());
+            log.error("Failed to process charge on payment gateway: {}", e.getMessage());
+            gatewayOutcome = PaymentOutcome.failure(e.getMessage());
         }
-        final ResultadoPago resultado = resultadoDelProveedor;
+        final PaymentOutcome outcome = gatewayOutcome;
 
-        PagoResult finalResult = new PagoResult(
+        PaymentResult finalResult = new PaymentResult(
                 command.paymentId(),
-                resultado.exitoso(),
-                resultado.estado(),
-                resultado.chargeId(),
-                resultado.clientSecret(),
-                resultado.codigoAutorizacion(),
-                resultado.mensajeError(),
+                outcome.successful(),
+                outcome.status(),
+                outcome.chargeId(),
+                outcome.clientSecret(),
+                outcome.authorizationCode(),
+                outcome.errorMessage(),
                 false
         );
 
-        // 5. El registro del intento y la ACTUALIZACION del registro de
-        // idempotencia se confirman juntos. La actualizacion va por la clave
-        // de negocio, de modo que no inserta una fila nueva: el resultado
-        // llega a la fila que ya fue reclamada.
+        // 5. Update attempt log and idempotency record atomically
         unitOfWork.runInTransaction(() -> {
-            // El numero de intento es la PROGRESION real: la bitacora dice
-            // cuantas veces se ha intentado, y no siempre "a la primera".
-            int numeroDeIntento = 1 + attemptRepositoryPort.countAttempts(
+            int attemptCount = 1 + attemptRepositoryPort.countAttempts(
                     command.tenantId(), ProviderType.STRIPE, "CHARGE", command.paymentId());
 
-            attemptRepositoryPort.save(resultado.exitoso()
+            attemptRepositoryPort.save(outcome.successful()
                     ? IntegrationAttempt.ok(
                             command.tenantId(),
                             ProviderType.STRIPE,
                             "CHARGE",
                             command.paymentId(),
-                            numeroDeIntento)
+                            attemptCount)
                     : IntegrationAttempt.retry(
                             command.tenantId(),
                             ProviderType.STRIPE,
                             "CHARGE",
                             command.paymentId(),
-                            numeroDeIntento,
-                            resultado.mensajeError()));
+                            attemptCount,
+                            outcome.errorMessage()));
 
             String payload = serializeResult(finalResult);
             String hash = Integer.toHexString(payload.hashCode());
 
-            // Un fallo NO es un resultado definitivo: la clave se libera
-            // para que un reintento pueda volver a intentarlo. Con el
-            // resultado cacheado como definitivo, la peticion del usuario se
-            // perdia para siempre.
             idempotencyRepositoryPort.updateByKey(
                     command.tenantId(),
                     IdempotencyScope.PAYMENT,
                     command.idempotencyKey(),
-                    resultado.exitoso() ? claimed.completed(payload, hash) : claimed.released());
+                    outcome.successful() ? claimed.completed(payload, hash) : claimed.released());
         });
 
         SecurityEventLogger.registrar("cobro_procesado", command.tenantId(), null, null,
-                finalResult.exitoso() ? "ok" : "fallo", java.util.Map.of("pago", command.paymentId().toString()));
+                finalResult.successful() ? "ok" : "fallo", java.util.Map.of("pago", command.paymentId().toString()));
 
         return finalResult;
     }
 
-    /**
-     * La carga util de la peticion de cobro. Es lo que se huella para
-     * distinguir la peticion que se repite de otra con la misma clave.
-     */
-    private String cargaUtilDe(ProcesarPagoCommand command) {
+    private String buildPayloadFingerprintSource(ProcessPaymentCommand command) {
         return String.join("|",
                 String.valueOf(command.tenantId()),
                 String.valueOf(command.paymentId()),
-                String.valueOf(command.monto()),
-                String.valueOf(command.moneda()),
-                String.valueOf(command.tokenTarjeta()),
-                String.valueOf(command.descripcion()),
-                String.valueOf(command.clienteEmail()));
+                String.valueOf(command.amount()),
+                String.valueOf(command.currency()),
+                String.valueOf(command.cardToken()),
+                String.valueOf(command.description()),
+                String.valueOf(command.customerEmail()));
     }
 
-    private String serializeResult(PagoResult result) {
-        return String.format("{\"exitoso\":%b,\"estado\":\"%s\",\"chargeId\":\"%s\",\"clientSecret\":\"%s\",\"codigoAutorizacion\":\"%s\",\"mensajeError\":\"%s\"}",
-                result.exitoso(),
-                result.estado() != null ? result.estado() : "",
+    private String serializeResult(PaymentResult result) {
+        return String.format("{\"successful\":%b,\"status\":\"%s\",\"chargeId\":\"%s\",\"clientSecret\":\"%s\",\"authorizationCode\":\"%s\",\"errorMessage\":\"%s\"}",
+                result.successful(),
+                result.status() != null ? result.status() : "",
                 result.chargeId() != null ? result.chargeId() : "",
                 result.clientSecret() != null ? result.clientSecret() : "",
-                result.codigoAutorizacion() != null ? result.codigoAutorizacion() : "",
-                result.mensajeError() != null ? result.mensajeError().replace("\"", "\\\"") : ""
+                result.authorizationCode() != null ? result.authorizationCode() : "",
+                result.errorMessage() != null ? result.errorMessage().replace("\"", "\\\"") : ""
         );
     }
 
-    private PagoResult deserializeResult(java.util.UUID paymentId, String payload, boolean fromCache) {
+    private PaymentResult deserializeResult(UUID paymentId, String payload, boolean fromCache) {
         if (payload == null) {
-            return new PagoResult(paymentId, false, "FAILED", null, null, null, "Error deserializando", fromCache);
+            return new PaymentResult(paymentId, false, "FAILED", null, null, null, "Error deserializing payload", fromCache);
         }
-        boolean exitoso = payload.contains("\"exitoso\":true");
-        String estado = extractJsonField(payload, "estado");
+        boolean successful = payload.contains("\"successful\":true") || payload.contains("\"exitoso\":true");
+        String status = extractJsonField(payload, "status");
+        if (status == null) {
+            status = extractJsonField(payload, "estado");
+        }
         String chargeId = extractJsonField(payload, "chargeId");
         String clientSecret = extractJsonField(payload, "clientSecret");
-        String codigo = extractJsonField(payload, "codigoAutorizacion");
-        String error = extractJsonField(payload, "mensajeError");
+        String code = extractJsonField(payload, "authorizationCode");
+        if (code == null) {
+            code = extractJsonField(payload, "codigoAutorizacion");
+        }
+        String error = extractJsonField(payload, "errorMessage");
+        if (error == null) {
+            error = extractJsonField(payload, "mensajeError");
+        }
 
-        return new PagoResult(paymentId, exitoso, estado, chargeId, clientSecret, codigo, error, fromCache);
+        return new PaymentResult(paymentId, successful, status, chargeId, clientSecret, code, error, fromCache);
     }
 
     private String extractJsonField(String json, String key) {

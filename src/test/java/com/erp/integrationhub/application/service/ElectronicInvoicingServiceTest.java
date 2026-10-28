@@ -1,27 +1,29 @@
 package com.erp.integrationhub.application.service;
 
-import com.erp.integrationhub.application.dto.command.EmitirComprobanteCommand;
-import com.erp.integrationhub.application.dto.command.ItemComprobanteCommand;
-import com.erp.integrationhub.application.dto.result.ComprobanteResult;
-import com.erp.integrationhub.domain.model.ComprobanteParaDeclarar;
+import com.erp.integrationhub.application.dto.command.EmitInvoiceCommand;
+import com.erp.integrationhub.application.dto.command.InvoiceItemCommand;
+import com.erp.integrationhub.application.dto.result.InvoiceResult;
+import com.erp.integrationhub.domain.model.DeclarationResult;
 import com.erp.integrationhub.domain.model.IdempotencyKeyState;
 import com.erp.integrationhub.domain.model.IdempotencyRecord;
 import com.erp.integrationhub.domain.model.IdempotencyScope;
-import com.erp.integrationhub.domain.model.ResultadoDeclaracion;
-import com.erp.integrationhub.domain.port.EmisorTributarioPort;
+import com.erp.integrationhub.domain.model.InvoiceToDeclare;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
+import com.erp.integrationhub.domain.port.TaxAuthorityEmitterPort;
+import com.erp.integrationhub.domain.port.VoucherNumberingPort;
+import com.erp.integrationhub.domain.util.PayloadFingerprint;
+import com.erp.integrationhub.support.DirectUnitOfWork;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
-import com.erp.integrationhub.support.DirectUnitOfWork;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -32,7 +34,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -41,7 +42,7 @@ import static org.mockito.Mockito.when;
 class ElectronicInvoicingServiceTest {
 
     @Mock
-    private EmisorTributarioPort emisorTributarioPort;
+    private TaxAuthorityEmitterPort taxAuthorityEmitterPort;
 
     @Mock
     private IdempotencyRepositoryPort idempotencyRepositoryPort;
@@ -53,17 +54,17 @@ class ElectronicInvoicingServiceTest {
     private RetryQueueRepositoryPort retryQueueRepositoryPort;
 
     @Mock
-    private com.erp.integrationhub.domain.port.VoucherNumberingPort numberingPort;
+    private VoucherNumberingPort numberingPort;
 
     private ElectronicInvoicingService electronicInvoicingService;
 
     private final UUID tenantId = UUID.randomUUID();
-    private final UUID comprobanteId = UUID.randomUUID();
+    private final UUID invoiceId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
         electronicInvoicingService = new ElectronicInvoicingService(
-                emisorTributarioPort,
+                taxAuthorityEmitterPort,
                 idempotencyRepositoryPort,
                 attemptRepositoryPort,
                 retryQueueRepositoryPort,
@@ -74,20 +75,20 @@ class ElectronicInvoicingServiceTest {
 
     @Test
     @DisplayName("Should successfully emit invoice to SUNAT and save idempotency record")
-    void emitirComprobante_WhenNewRequest_ShouldCallProviderAndPersistIdempotency() {
+    void emitInvoice_WhenNewRequest_ShouldCallProviderAndPersistIdempotency() {
         // Given
-        ItemComprobanteCommand item = new ItemComprobanteCommand("NIU", "Mantenimiento Preventivo", BigDecimal.ONE, new BigDecimal("100.00"), new BigDecimal("118.00"), new BigDecimal("18.00"), new BigDecimal("118.00"));
-        EmitirComprobanteCommand command = new EmitirComprobanteCommand(
+        InvoiceItemCommand item = new InvoiceItemCommand("NIU", "Preventive Maintenance", BigDecimal.ONE, new BigDecimal("100.00"), new BigDecimal("118.00"), new BigDecimal("18.00"), new BigDecimal("118.00"));
+        EmitInvoiceCommand command = new EmitInvoiceCommand(
                 tenantId,
-                comprobanteId,
+                invoiceId,
                 "FACTURA",
                 "F001",
                 123,
                 "6",
                 "20123456789",
-                "EMPRESA DE TRANSPORTE SAC",
+                "TRANSPORT ENTERPRISE SAC",
                 "Av. Industrial 456",
-                "contabilidad@empresa.com",
+                "accounting@company.com",
                 "PEN",
                 new BigDecimal("100.00"),
                 new BigDecimal("18.00"),
@@ -100,7 +101,7 @@ class ElectronicInvoicingServiceTest {
         when(idempotencyRepositoryPort.findByTenantAndScopeAndKey(tenantId, IdempotencyScope.VOUCHER, "idem-key-001"))
                 .thenReturn(Optional.empty());
 
-        ResultadoDeclaracion declaracionOk = ResultadoDeclaracion.aceptado(
+        DeclarationResult declarationOk = DeclarationResult.accepted(
                 "0",
                 "La Factura F001-123 ha sido aceptada por SUNAT",
                 "https://storage.pe/pdf/F001-123.pdf",
@@ -108,15 +109,15 @@ class ElectronicInvoicingServiceTest {
                 "https://storage.pe/cdr/R-F001-123.zip",
                 "HASH123456789"
         );
-        when(emisorTributarioPort.emitirComprobante(any(ComprobanteParaDeclarar.class))).thenReturn(declaracionOk);
+        when(taxAuthorityEmitterPort.emitInvoice(any(InvoiceToDeclare.class))).thenReturn(declarationOk);
 
         // When
-        ComprobanteResult result = electronicInvoicingService.emitirComprobante(command);
+        InvoiceResult result = electronicInvoicingService.emitInvoice(command);
 
         // Then
         assertNotNull(result);
-        assertTrue(result.exitoso());
-        assertEquals("ACEPTADO", result.estadoSunat());
+        assertTrue(result.successful());
+        assertEquals("ACEPTADO", result.sunatStatus());
         assertEquals("https://storage.pe/pdf/F001-123.pdf", result.pdfUrl());
         assertFalse(result.cachedResponse());
 
@@ -127,11 +128,11 @@ class ElectronicInvoicingServiceTest {
 
     @Test
     @DisplayName("Should return cached response when idempotency record is found without calling provider")
-    void emitirComprobante_WhenIdempotencyRecordExists_ShouldReturnCachedResult() {
+    void emitInvoice_WhenIdempotencyRecordExists_ShouldReturnCachedResult() {
         // Given
-        EmitirComprobanteCommand command = new EmitirComprobanteCommand(
+        EmitInvoiceCommand command = new EmitInvoiceCommand(
                 tenantId,
-                comprobanteId,
+                invoiceId,
                 "FACTURA",
                 "F001",
                 123,
@@ -149,13 +150,10 @@ class ElectronicInvoicingServiceTest {
                 "idem-key-001"
         );
 
-        String cachedJson = "{\"exitoso\":true,\"estadoSunat\":\"ACEPTADA\",\"codigo\":\"0\",\"mensaje\":\"Aceptada previamente\",\"pdfUrl\":\"https://storage.pe/pdf/F001-123.pdf\"}";
-        // El registro almacenado lleva la huella de la MISMA peticion: con
-        // otra huella, la clave se rechaza por conflicto, porque no es la
-        // misma peticion.
-        String huella = com.erp.integrationhub.domain.util.PayloadFingerprint.of(String.join("|",
+        String cachedJson = "{\"successful\":true,\"sunatStatus\":\"ACEPTADA\",\"sunatResponseCode\":\"0\",\"sunatMessage\":\"Previously accepted\",\"pdfUrl\":\"https://storage.pe/pdf/F001-123.pdf\"}";
+        String fingerprint = PayloadFingerprint.of(String.join("|",
                 String.valueOf(tenantId),
-                String.valueOf(comprobanteId),
+                String.valueOf(invoiceId),
                 "FACTURA",
                 "F001",
                 "123",
@@ -163,31 +161,31 @@ class ElectronicInvoicingServiceTest {
                 "11.80",
                 "PEN"));
 
-        IdempotencyRecord existingRecord = new IdempotencyRecord(UUID.randomUUID(), tenantId, IdempotencyScope.VOUCHER, "idem-key-001", huella, "hash", cachedJson,
-                IdempotencyKeyState.COMPLETED, java.time.Instant.now());
+        IdempotencyRecord existingRecord = new IdempotencyRecord(UUID.randomUUID(), tenantId, IdempotencyScope.VOUCHER, "idem-key-001", fingerprint, "hash", cachedJson,
+                IdempotencyKeyState.COMPLETED, Instant.now());
 
         when(idempotencyRepositoryPort.findByTenantAndScopeAndKey(tenantId, IdempotencyScope.VOUCHER, "idem-key-001"))
                 .thenReturn(Optional.of(existingRecord));
 
         // When
-        ComprobanteResult result = electronicInvoicingService.emitirComprobante(command);
+        InvoiceResult result = electronicInvoicingService.emitInvoice(command);
 
         // Then
         assertNotNull(result);
-        assertTrue(result.exitoso());
+        assertTrue(result.successful());
         assertTrue(result.cachedResponse());
-        assertEquals("ACEPTADA", result.estadoSunat());
-        verify(emisorTributarioPort, never()).emitirComprobante(any());
+        assertEquals("ACEPTADA", result.sunatStatus());
+        verify(taxAuthorityEmitterPort, never()).emitInvoice(any());
     }
 
     @Test
     @DisplayName("Should enqueue into retry queue when SUNAT provider fails with exception")
-    void emitirComprobante_WhenProviderFails_ShouldEnqueueRetryTaskAndReturnPending() {
+    void emitInvoice_WhenProviderFails_ShouldEnqueueRetryTaskAndReturnPending() {
         // Given
-        ItemComprobanteCommand item = new ItemComprobanteCommand("NIU", "Servicio Mecanico", BigDecimal.ONE, BigDecimal.TEN, new BigDecimal("11.80"), new BigDecimal("1.80"), new BigDecimal("11.80"));
-        EmitirComprobanteCommand command = new EmitirComprobanteCommand(
+        InvoiceItemCommand item = new InvoiceItemCommand("NIU", "Mechanical Service", BigDecimal.ONE, BigDecimal.TEN, new BigDecimal("11.80"), new BigDecimal("1.80"), new BigDecimal("11.80"));
+        EmitInvoiceCommand command = new EmitInvoiceCommand(
                 tenantId,
-                comprobanteId,
+                invoiceId,
                 "BOLETA",
                 "B001",
                 55,
@@ -207,15 +205,15 @@ class ElectronicInvoicingServiceTest {
 
         when(idempotencyRepositoryPort.findByTenantAndScopeAndKey(tenantId, IdempotencyScope.VOUCHER, "idem-fail-01"))
                 .thenReturn(Optional.empty());
-        when(emisorTributarioPort.emitirComprobante(any())).thenThrow(new RuntimeException("Connection timed out to SUNAT PSE"));
+        when(taxAuthorityEmitterPort.emitInvoice(any())).thenThrow(new RuntimeException("Connection timed out to SUNAT PSE"));
 
         // When
-        ComprobanteResult result = electronicInvoicingService.emitirComprobante(command);
+        InvoiceResult result = electronicInvoicingService.emitInvoice(command);
 
         // Then
         assertNotNull(result);
-        assertTrue(result.exitoso());
-        assertEquals("PENDIENTE_SUNAT", result.estadoSunat());
+        assertTrue(result.successful());
+        assertEquals("PENDIENTE_SUNAT", result.sunatStatus());
 
         verify(retryQueueRepositoryPort).save(any());
         verify(attemptRepositoryPort).save(any());

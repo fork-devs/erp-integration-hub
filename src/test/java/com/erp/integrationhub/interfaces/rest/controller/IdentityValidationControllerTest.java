@@ -1,13 +1,12 @@
 package com.erp.integrationhub.interfaces.rest.controller;
 
-import com.erp.integrationhub.application.dto.result.PlacaResult;
+import com.erp.integrationhub.application.dto.result.PlateResult;
 import com.erp.integrationhub.application.dto.result.RucResult;
-import com.erp.integrationhub.application.usecase.ConsultarPlacaUseCase;
-import com.erp.integrationhub.application.usecase.ConsultarRucUseCase;
+import com.erp.integrationhub.application.usecase.QueryPlateUseCase;
+import com.erp.integrationhub.application.usecase.QueryRucUseCase;
+import com.erp.integrationhub.infrastructure.security.TenantRateLimiter;
 import com.erp.integrationhub.interfaces.rest.advice.GlobalRestExceptionHandler;
 import com.erp.integrationhub.support.AuthenticatedUserContext;
-
-import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,6 +16,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+
+import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
@@ -30,17 +31,17 @@ class IdentityValidationControllerTest {
     private MockMvc mockMvc;
 
     @Mock
-    private ConsultarRucUseCase consultarRucUseCase;
+    private QueryRucUseCase queryRucUseCase;
 
     @Mock
-    private ConsultarPlacaUseCase consultarPlacaUseCase;
+    private QueryPlateUseCase queryPlateUseCase;
 
     @BeforeEach
     void setUp() {
         IdentityValidationController controller = new IdentityValidationController(
-                consultarRucUseCase,
-                consultarPlacaUseCase,
-                new com.erp.integrationhub.infrastructure.security.TenantRateLimiter(60, 60));
+                queryRucUseCase,
+                queryPlateUseCase,
+                new TenantRateLimiter(60, 60));
         AuthenticatedUserContext.asTenant(UUID.randomUUID());
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalRestExceptionHandler())
@@ -63,7 +64,7 @@ class IdentityValidationControllerTest {
                 true,
                 false
         );
-        when(consultarRucUseCase.consultarRuc(any())).thenReturn(result);
+        when(queryRucUseCase.queryRuc(any())).thenReturn(result);
 
         mockMvc.perform(get("/api/v1/integrations/validate/ruc/20601234567")
                         .contentType(MediaType.APPLICATION_JSON))
@@ -77,7 +78,7 @@ class IdentityValidationControllerTest {
     @Test
     @DisplayName("GET /api/v1/integrations/validate/placa/{placa} - Should return 200 OK with Plate details")
     void validatePlaca_ShouldReturn200() throws Exception {
-        PlacaResult result = new PlacaResult(
+        PlateResult result = new PlateResult(
                 "ABC123",
                 "NISSAN",
                 "FRONTIER",
@@ -89,7 +90,7 @@ class IdentityValidationControllerTest {
                 true,
                 false
         );
-        when(consultarPlacaUseCase.consultarPlaca(any())).thenReturn(result);
+        when(queryPlateUseCase.queryPlate(any())).thenReturn(result);
 
         mockMvc.perform(get("/api/v1/integrations/validate/placa/ABC123")
                         .contentType(MediaType.APPLICATION_JSON))

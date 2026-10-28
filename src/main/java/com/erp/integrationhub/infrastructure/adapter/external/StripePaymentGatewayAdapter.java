@@ -1,11 +1,10 @@
 package com.erp.integrationhub.infrastructure.adapter.external;
 
-import com.erp.integrationhub.domain.exception.IntegrationValidationException;
 import com.erp.integrationhub.domain.exception.ProviderUnavailableException;
-import com.erp.integrationhub.domain.model.Moneda;
-import com.erp.integrationhub.domain.model.ResultadoPago;
-import com.erp.integrationhub.domain.model.SolicitudCobro;
-import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
+import com.erp.integrationhub.domain.model.ChargeRequest;
+import com.erp.integrationhub.domain.model.Currency;
+import com.erp.integrationhub.domain.model.PaymentOutcome;
+import com.erp.integrationhub.domain.port.PaymentGatewayPort;
 import com.stripe.Stripe;
 import com.stripe.exception.CardException;
 import com.stripe.exception.StripeException;
@@ -16,9 +15,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
-import java.util.UUID;
 
-public class StripePaymentGatewayAdapter implements PasarelaDePagoPort {
+/**
+ * External adapter communicating with Stripe PaymentIntents API for credit/debit card processing.
+ */
+public class StripePaymentGatewayAdapter implements PaymentGatewayPort {
 
     private static final Logger log = LoggerFactory.getLogger(StripePaymentGatewayAdapter.class);
 
@@ -34,21 +35,19 @@ public class StripePaymentGatewayAdapter implements PasarelaDePagoPort {
     }
 
     @Override
-    public ResultadoPago procesarCobro(SolicitudCobro solicitud) {
-        log.info("[STRIPE ACL] Procesando cobro de {} {} con idempotencyKey={}",
-                solicitud.getMoneda(), solicitud.getMonto(), solicitud.getIdempotencyKey());
+    public PaymentOutcome processCharge(ChargeRequest request) {
+        log.info("[STRIPE ACL] Processing charge of {} {} with idempotencyKey={}",
+                request.getCurrency(), request.getAmount(), request.getIdempotencyKey());
 
-        // Si estamos en modo sandbox con clave simulada (sin credencial real), devolvemos respuesta simulada
-        // Integración Real con API de Stripe
         try {
-            long amountInCents = solicitud.getMonto().multiply(BigDecimal.valueOf(100)).longValue();
-            String currency = solicitud.getMoneda() == Moneda.USD ? "usd" : "pen";
+            long amountInCents = request.getAmount().multiply(BigDecimal.valueOf(100)).longValue();
+            String currency = request.getCurrency() == Currency.USD ? "usd" : "pen";
 
             PaymentIntentCreateParams.Builder paramsBuilder = PaymentIntentCreateParams.builder()
                     .setAmount(amountInCents)
                     .setCurrency(currency)
-                    .setDescription(solicitud.getDescripcion())
-                    .setPaymentMethod(solicitud.getTokenTarjeta())
+                    .setDescription(request.getDescription())
+                    .setPaymentMethod(request.getCardToken())
                     .setConfirm(true)
                     .setAutomaticPaymentMethods(
                             PaymentIntentCreateParams.AutomaticPaymentMethods.builder()
@@ -57,54 +56,54 @@ public class StripePaymentGatewayAdapter implements PasarelaDePagoPort {
                                     .build()
                     );
 
-            if (solicitud.getClienteEmail() != null && !solicitud.getClienteEmail().isBlank()) {
-                paramsBuilder.setReceiptEmail(solicitud.getClienteEmail());
+            if (request.getCustomerEmail() != null && !request.getCustomerEmail().isBlank()) {
+                paramsBuilder.setReceiptEmail(request.getCustomerEmail());
             }
 
-            paramsBuilder.putMetadata("tenant_id", solicitud.getTenantId().toString());
-            paramsBuilder.putMetadata("payment_id", solicitud.getPaymentId().toString());
+            paramsBuilder.putMetadata("tenant_id", request.getTenantId().toString());
+            paramsBuilder.putMetadata("payment_id", request.getPaymentId().toString());
 
             RequestOptions options = RequestOptions.builder()
                     .setApiKey(apiKey)
-                    .setIdempotencyKey(solicitud.getIdempotencyKey())
+                    .setIdempotencyKey(request.getIdempotencyKey())
                     .build();
 
             PaymentIntent paymentIntent = PaymentIntent.create(paramsBuilder.build(), options);
 
-            log.info("[STRIPE ACL] PaymentIntent creado con estado: {} (ID: {})", paymentIntent.getStatus(), paymentIntent.getId());
+            log.info("[STRIPE ACL] PaymentIntent created with status: {} (ID: {})", paymentIntent.getStatus(), paymentIntent.getId());
 
             return switch (paymentIntent.getStatus()) {
-                case "succeeded" -> ResultadoPago.exitoso(paymentIntent.getId(), paymentIntent.getId());
-                case "requires_action", "requires_confirmation" -> ResultadoPago.requiereAccion(paymentIntent.getId(), paymentIntent.getClientSecret());
-                case "processing" -> new ResultadoPago(true, "PENDING", paymentIntent.getId(), paymentIntent.getClientSecret(), null, null);
-                default -> ResultadoPago.fallido("Estado no exitoso de Stripe: " + paymentIntent.getStatus());
+                case "succeeded" -> PaymentOutcome.success(paymentIntent.getId(), paymentIntent.getId());
+                case "requires_action", "requires_confirmation" -> PaymentOutcome.requiresAction(paymentIntent.getId(), paymentIntent.getClientSecret());
+                case "processing" -> new PaymentOutcome(true, "PENDING", paymentIntent.getId(), paymentIntent.getClientSecret(), null, null);
+                default -> PaymentOutcome.failure("Unsuccessful status from Stripe: " + paymentIntent.getStatus());
             };
 
         } catch (CardException e) {
-            log.warn("[STRIPE ACL] Tarjeta declinada: {} (Code: {})", e.getMessage(), e.getCode());
-            return ResultadoPago.fallido("Tarjeta rechazada: " + e.getUserMessage());
+            log.warn("[STRIPE ACL] Card declined: {} (Code: {})", e.getMessage(), e.getCode());
+            return PaymentOutcome.failure("Card declined: " + e.getUserMessage());
         } catch (StripeException e) {
-            log.error("[STRIPE ACL] Error de comunicación con Stripe API: {}", e.getMessage());
-            throw new ProviderUnavailableException("Error de comunicación con Stripe: " + e.getMessage());
+            log.error("[STRIPE ACL] Communication error with Stripe API: {}", e.getMessage());
+            throw new ProviderUnavailableException("Error communicating with Stripe: " + e.getMessage());
         } catch (Exception e) {
-            log.error("[STRIPE ACL] Error interno procesando pago en Stripe", e);
-            throw new ProviderUnavailableException("Fallo inesperado al conectar con Stripe: " + e.getMessage());
+            log.error("[STRIPE ACL] Internal error processing payment in Stripe", e);
+            throw new ProviderUnavailableException("Unexpected failure connecting to Stripe: " + e.getMessage());
         }
     }
 
     @Override
-    public ResultadoPago consultarEstadoPago(String chargeId) {
+    public PaymentOutcome queryPaymentStatus(String chargeId) {
         try {
             RequestOptions options = RequestOptions.builder().setApiKey(apiKey).build();
             PaymentIntent paymentIntent = PaymentIntent.retrieve(chargeId, options);
             if ("succeeded".equals(paymentIntent.getStatus())) {
-                return ResultadoPago.exitoso(paymentIntent.getId(), paymentIntent.getId());
+                return PaymentOutcome.success(paymentIntent.getId(), paymentIntent.getId());
             } else {
-                return new ResultadoPago(false, paymentIntent.getStatus(), paymentIntent.getId(), paymentIntent.getClientSecret(), null, null);
+                return new PaymentOutcome(false, paymentIntent.getStatus(), paymentIntent.getId(), paymentIntent.getClientSecret(), null, null);
             }
         } catch (StripeException e) {
-            log.error("[STRIPE ACL] Error consultando PaymentIntent {}: {}", chargeId, e.getMessage());
-            throw new ProviderUnavailableException("Error consultando estado en Stripe: " + e.getMessage());
+            log.error("[STRIPE ACL] Error querying PaymentIntent {}: {}", chargeId, e.getMessage());
+            throw new ProviderUnavailableException("Error querying status in Stripe: " + e.getMessage());
         }
     }
 }

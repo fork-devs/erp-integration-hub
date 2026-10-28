@@ -1,49 +1,41 @@
 package com.erp.integrationhub.support;
 
-import com.erp.integrationhub.application.dto.command.ProcesarPagoCommand;
+import com.erp.integrationhub.application.dto.command.ProcessPaymentCommand;
 import com.erp.integrationhub.application.service.PaymentIntegrationService;
 import com.erp.integrationhub.domain.model.IdempotencyScope;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
-import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
+import com.erp.integrationhub.domain.port.PaymentGatewayPort;
 import com.erp.integrationhub.domain.port.UnitOfWork;
 import com.erp.integrationhub.infrastructure.persistence.entity.IdempotencyKeyJpaEntity;
 import com.erp.integrationhub.infrastructure.persistence.repository.SpringDataIdempotencyRepository;
 import com.erp.integrationhub.infrastructure.persistence.rls.TenantContextHolder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.when;
 
 /**
- * El registro del intento de cobro y el registro de idempotencia se confirman
- * juntos.
- *
- * <p>Si la escritura de la idempotencia falla despues de haber registrado el
- * intento, queda un cobro sin su clave de idempotencia: la siguiente peticion
- * con la misma clave no encontraria el registro y cobraria de nuevo.
- *
- * <p>Ver docs/doc-estado-implementacion.md, hallazgo P0 5.3.
+ * Tests ensuring atomic persistence of payment attempts and idempotency records.
  */
 class PaymentAtomicityTest extends AbstractPostgresIntegrationTest {
 
-    private static final UUID TALLER = UUID.fromString("bbbb2222-4444-5555-6666-777788889999");
+    private static final UUID TENANT_ID = UUID.fromString("bbbb2222-4444-5555-6666-777788889999");
 
-    // Cada test usa su propio pago y su propia clave: la idempotencia
-    // devolveria el resultado cacheado de la peticion anterior y el test
-    // no llegaria a escribir nada.
-    private UUID pago;
-    private String clave;
+    private UUID paymentId;
+    private String idempotencyKey;
 
     @Autowired
     private PaymentIntegrationService paymentIntegrationService;
@@ -58,16 +50,16 @@ class PaymentAtomicityTest extends AbstractPostgresIntegrationTest {
     private UnitOfWork unitOfWork;
 
     @Autowired
-    private PasarelaDePagoPort pasarelaDePagoPort;
+    private PaymentGatewayPort paymentGatewayPort;
 
     @MockitoSpyBean
     private SpringDataIdempotencyRepository springDataIdempotencyRepository;
 
     @BeforeEach
     void setUp() {
-        TenantContextHolder.setTenantId(TALLER);
-        pago = UUID.randomUUID();
-        clave = "clave-" + UUID.randomUUID();
+        TenantContextHolder.setTenantId(TENANT_ID);
+        paymentId = UUID.randomUUID();
+        idempotencyKey = "key-" + UUID.randomUUID();
     }
 
     @AfterEach
@@ -76,46 +68,48 @@ class PaymentAtomicityTest extends AbstractPostgresIntegrationTest {
     }
 
     @Test
-    void unFalloAlEscribirLaIdempotenciaNoDejaUnIntentoDeCobroRegistrado() {
-        doThrow(new RuntimeException("no se puede escribir la idempotencia"))
+    @DisplayName("Failure while writing idempotency rolls back attempt record atomically")
+    void failureWritingIdempotencyDoesNotLeaveOrphanAttempt() {
+        doThrow(new RuntimeException("cannot write idempotency"))
                 .when(springDataIdempotencyRepository).save(any(IdempotencyKeyJpaEntity.class));
 
-        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class, () -> cobrar());
+        assertThrows(RuntimeException.class, this::executeCharge);
 
-        assertEquals(0, intentosRegistrados(),
-                "No debe quedar un intento de cobro registrado sin su clave de idempotencia");
-        assertTrue(registroDeIdempotencia().isEmpty(),
-                "No debe quedar un registro de idempotencia sin su intento de cobro");
+        assertEquals(0, countRegisteredAttempts(),
+                "No payment attempt should remain registered without its idempotency key");
+        assertTrue(findIdempotencyRecord().isEmpty(),
+                "No idempotency record should remain without its payment attempt");
     }
 
     @Test
-    void sinFalloSeConfirmanLasDosEscriturasJuntas() {
-        cobrar();
+    @DisplayName("Without failure, both attempt and idempotency records commit together")
+    void withoutFailureBothWritesCommitTogether() {
+        executeCharge();
 
-        assertEquals(1, intentosRegistrados(), "El intento de cobro debe quedar registrado");
-        assertEquals(1, registroDeIdempotencia().size(), "El registro de idempotencia debe quedar escrito");
+        assertEquals(1, countRegisteredAttempts(), "Payment attempt must be recorded");
+        assertEquals(1, findIdempotencyRecord().size(), "Idempotency record must be recorded");
     }
 
-    private void cobrar() {
-        paymentIntegrationService.procesarPago(new ProcesarPagoCommand(
-                TALLER,
-                pago,
+    private void executeCharge() {
+        paymentIntegrationService.processPayment(new ProcessPaymentCommand(
+                TENANT_ID,
+                paymentId,
                 new BigDecimal("50.00"),
                 "PEN",
                 "tok_test_123",
-                "Compra de prueba",
-                "cliente@taller.pe",
-                clave));
+                "Test charge",
+                "client@workshop.pe",
+                idempotencyKey));
     }
 
-    private long intentosRegistrados() {
-        return attemptRepositoryPort.findByTenantIdAndReferenceId(TALLER, pago).size();
+    private long countRegisteredAttempts() {
+        return attemptRepositoryPort.findByTenantIdAndReferenceId(TENANT_ID, paymentId).size();
     }
 
-    private java.util.List<?> registroDeIdempotencia() {
+    private List<?> findIdempotencyRecord() {
         return idempotencyRepositoryPort
-                .findByTenantAndScopeAndKey(TALLER, IdempotencyScope.PAYMENT, clave)
-                .map(java.util.List::of)
-                .orElse(java.util.List.of());
+                .findByTenantAndScopeAndKey(TENANT_ID, IdempotencyScope.PAYMENT, idempotencyKey)
+                .map(List::of)
+                .orElse(List.of());
     }
 }

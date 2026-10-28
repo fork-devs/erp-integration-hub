@@ -1,7 +1,7 @@
 package com.erp.integrationhub.infrastructure.adapter.external;
 
-import com.erp.integrationhub.domain.model.ConsultaPlacaResult;
-import com.erp.integrationhub.domain.port.ValidadorVehicularPort;
+import com.erp.integrationhub.domain.model.QueryPlateResult;
+import com.erp.integrationhub.domain.port.VehicleValidatorPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -11,7 +11,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 
-public class SunarpVehicleValidationAdapter implements ValidadorVehicularPort {
+/**
+ * External adapter querying vehicle license plates against SUNARP via ApiPeru.
+ */
+public class SunarpVehicleValidationAdapter implements VehicleValidatorPort {
 
     private static final Logger log = LoggerFactory.getLogger(SunarpVehicleValidationAdapter.class);
 
@@ -31,17 +34,15 @@ public class SunarpVehicleValidationAdapter implements ValidadorVehicularPort {
     }
 
     @Override
-    public ConsultaPlacaResult consultarPlaca(String placa) {
-        log.info("[SUNARP ACL] Consultando padrón vehicular para Placa: {}", placa);
+    public QueryPlateResult queryPlate(String plate) {
+        log.info("[SUNARP ACL] Querying vehicle registry for plate: {}", plate);
 
-        if (placa == null || placa.trim().length() < 5) {
-            return ConsultaPlacaResult.invalido(placa);
+        if (plate == null || plate.trim().length() < 5) {
+            return QueryPlateResult.invalid(plate);
         }
 
-        String sanitizedPlaca = placa.trim().toUpperCase().replace("-", "");
+        String sanitizedPlate = plate.trim().toUpperCase().replace("-", "");
 
-        // Modo sandbox si la credencial es de prueba/mock
-        // Llamada HTTP Real al API de SUNARP
         try {
             String targetUrl = baseUrl.endsWith("/") ? baseUrl + "placa" : baseUrl + "/placa";
             HttpRequest request = HttpRequest.newBuilder()
@@ -49,45 +50,45 @@ public class SunarpVehicleValidationAdapter implements ValidadorVehicularPort {
                     .timeout(Duration.ofSeconds(10))
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + token)
-                    .POST(HttpRequest.BodyPublishers.ofString(String.format("{\"placa\":\"%s\"}", sanitizedPlaca)))
+                    .POST(HttpRequest.BodyPublishers.ofString(String.format("{\"placa\":\"%s\"}", sanitizedPlate)))
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            log.info("[SUNARP ACL] Respuesta HTTP {}: {}", response.statusCode(), response.body());
+            log.info("[SUNARP ACL] HTTP response {}: {}", response.statusCode(), response.body());
 
             if (response.statusCode() == 200) {
                 String body = response.body();
-                String marca = extractJsonString(body, "marca");
-                String modelo = extractJsonString(body, "modelo");
+                String brand = extractJsonString(body, "marca");
+                String model = extractJsonString(body, "modelo");
                 String vin = extractJsonString(body, "vin");
                 if (vin == null) vin = extractJsonString(body, "serie");
-                String numeroMotor = extractJsonString(body, "numero_motor");
-                if (numeroMotor == null) numeroMotor = extractJsonString(body, "motor");
-                String anio = extractJsonString(body, "anio_fabricacion");
-                if (anio == null) anio = extractJsonString(body, "anio");
+                String engineNumber = extractJsonString(body, "numero_motor");
+                if (engineNumber == null) engineNumber = extractJsonString(body, "motor");
+                String manufactureYear = extractJsonString(body, "anio_fabricacion");
+                if (manufactureYear == null) manufactureYear = extractJsonString(body, "anio");
                 String color = extractJsonString(body, "color");
-                String combustible = extractJsonString(body, "combustible");
+                String fuelType = extractJsonString(body, "combustible");
 
-                if (marca != null && !marca.isBlank()) {
-                    return new ConsultaPlacaResult(
-                            sanitizedPlaca,
-                            marca,
-                            modelo != null ? modelo : "DESCONOCIDO",
+                if (brand != null && !brand.isBlank()) {
+                    return new QueryPlateResult(
+                            sanitizedPlate,
+                            brand,
+                            model != null ? model : "UNKNOWN",
                             vin,
-                            numeroMotor,
-                            anio,
+                            engineNumber,
+                            manufactureYear,
                             color,
-                            combustible,
+                            fuelType,
                             true
                     );
                 }
             }
 
-            return ConsultaPlacaResult.invalido(sanitizedPlaca);
+            return QueryPlateResult.invalid(sanitizedPlate);
 
         } catch (Exception e) {
-            log.error("[SUNARP ACL] Error al consultar API de Placa {}: {}", sanitizedPlaca, e.getMessage());
-            return ConsultaPlacaResult.invalido(sanitizedPlaca);
+            log.error("[SUNARP ACL] Error querying plate API for {}: {}", sanitizedPlate, e.getMessage());
+            return QueryPlateResult.invalid(sanitizedPlate);
         }
     }
 

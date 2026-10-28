@@ -10,11 +10,8 @@ public interface IntegrationAttemptRepositoryPort {
     IntegrationAttempt save(IntegrationAttempt attempt);
 
     /**
-     * Numero de intentos ya registrados para una operacion.
-     *
-     * <p>El numero de intento HARDCODEADO a 1 invalida la trazabilidad: la
-     * bitacora dice que todo ocurrio a la primera, y no hay forma de saber
-     * cuantas veces fallo una operacion antes de terminar.
+     * Counts recorded attempts for an operation.
+     * Prevents hardcoded attempt counters to ensure full traceability of retries.
      */
     int countAttempts(UUID tenantId, com.erp.integrationhub.domain.model.ProviderType provider,
                       String operation, UUID referenceId);

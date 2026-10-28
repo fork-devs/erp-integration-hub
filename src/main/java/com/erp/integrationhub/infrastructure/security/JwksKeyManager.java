@@ -16,38 +16,29 @@ import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Cliente del conjunto de claves publicas del servicio de autenticacion.
+ * Client for fetching and caching public keys from the authentication service JWKS endpoint.
  *
- * <p>Cuatro propiedades que el cliente anterior no tenia:
+ * <p>Key security and operational properties:
  *
  * <ul>
- *   <li>La vigencia de la cache se comprueba <strong>antes</strong> de
- *       devolver una clave conocida. Antes se devolvia la clave cacheada sin
- *       comprobar nada, de modo que una clave rotada seguia aceptandose
- *       durante toda la ventana de cache.</li>
- *   <li>Un identificador de clave desconocido se <strong>rechaza</strong>. No
- *       se cae a "cualquier clave": verificar el token contra una clave
- *       arbitraria es aceptar cualquier token firmado con cualquier clave
- *       que el servicio hubiera tenido.</li>
- *   <li>La descarga tiene tiempo de espera de conexion y de lectura. Antes,
- *       una autenticacion que colgara dejaba el proceso esperando
- *       indefinidamente.</li>
- *   <li>Un fallo de descarga <strong>no vacia la cache</strong> ni actualiza
- *       la marca de exito: se conserva el ultimo conjunto valido, y el
- *       intervalo de reintento tras un fallo esta acotado, de modo que la
- *       tasa de descargas no crece con el volumen de peticiones.</li>
+ *   <li>Cache expiration is checked <strong>before</strong> returning a known key.
+ *       Previously, cached keys were returned indefinitely without verification,
+ *       allowing rotated keys to remain valid throughout the entire cache window.</li>
+ *   <li>An unknown key ID is <strong>rejected</strong> without falling back to arbitrary keys:
+ *       verifying against arbitrary keys is insecure.</li>
+ *   <li>Key fetching enforces explicit connection and read timeouts.</li>
+ *   <li>Download failures <strong>do not purge the cache</strong>: previously loaded valid keys
+ *       are retained, and retry intervals are rate-limited to avoid thundering herd issues.</li>
  * </ul>
- *
- * <p>Ver docs/doc-estado-implementacion.md, hallazgos P1 6.29 y P0 5.12.
  */
 public class JwksKeyManager {
 
     private static final Logger log = LoggerFactory.getLogger(JwksKeyManager.class);
 
-    /** Vigencia de la cache tras una descarga correcta. */
+    /** Cache time-to-live following a successful download. */
     private static final long CACHE_TTL_SECONDS = 300;
 
-    /** Intervalo entre reintentos tras una descarga fallida. */
+    /** Interval between retries following a failed download. */
     private static final long RETRY_INTERVAL_SECONDS = 10;
 
     private static final int CONNECT_TIMEOUT_MILLIS = 2000;
@@ -56,13 +47,13 @@ public class JwksKeyManager {
     private final String jwksUrl;
     private final ConcurrentHashMap<String, RSAPublicKey> publicKeyMap = new ConcurrentHashMap<>();
 
-    /** Momento de la ultima descarga correcta. */
+    /** Timestamp of the last successful key set download. */
     private volatile Instant lastSuccessTime = Instant.EPOCH;
 
-    /** Momento del ultimo intento de descarga, correcto o no. */
+    /** Timestamp of the last download attempt (successful or failed). */
     private volatile Instant lastAttemptTime = Instant.EPOCH;
 
-    /** Si el ultimo intento de descarga fallo. */
+    /** Flag indicating whether the last download attempt failed. */
     private volatile boolean lastAttemptFailed = false;
 
     public JwksKeyManager(String jwksUrl, List<String> activeProfiles) {
@@ -71,9 +62,8 @@ public class JwksKeyManager {
     }
 
     public RSAPublicKey getPublicKey(String keyId) {
-        // La vigencia de la cache se comprueba ANTES de devolver una clave
-        // conocida: si no, una clave rotada seguiria aceptandose durante
-        // toda la ventana de cache.
+        // Verify cache freshness BEFORE returning a known key:
+        // otherwise a rotated key would remain valid throughout the cache window.
         refrescarSiProcede(false);
 
         if (keyId != null) {
@@ -83,15 +73,14 @@ public class JwksKeyManager {
             }
         }
 
-        // Identificador desconocido: puede ser una rotacion reciente.
+        // Unknown key identifier: trigger a forced refresh to account for recent key rotation.
         refrescarSiProcede(true);
 
         if (keyId != null) {
             return publicKeyMap.get(keyId);
         }
 
-        // Sin identificador no hay clave que devolver. Verificar contra una
-        // clave arbitraria es aceptar cualquier token.
+        // Without a key identifier, no key can be resolved. Verification against arbitrary keys is insecure.
         log.warn("Se ha presentado un token sin identificador de clave: se rechaza");
         return null;
     }
@@ -103,17 +92,15 @@ public class JwksKeyManager {
     }
 
     /**
-     * Descarga el conjunto de claves, salvo que la cache siga vigente o que
-     * el intervalo de reintento tras un fallo todavia no haya vencido.
+     * Refreshes the key set from the remote JWKS endpoint unless the cache remains valid
+     * or the retry interval after failure has not elapsed.
      */
     private synchronized void refrescarSiProcede(boolean force) {
         Instant now = Instant.now();
 
         if (lastAttemptFailed && lastAttemptTime.plusSeconds(RETRY_INTERVAL_SECONDS).isAfter(now)) {
-            // El ultimo intento fallo: no se reintenta hasta que venza el
-            // intervalo. Sin esto, cada peticion que arrive con un
-            // identificador desconocido golpearia al emisor, y la tasa de
-            // descargas creceria con el volumen de peticiones.
+            // The previous attempt failed: wait until the retry interval elapses.
+            // This prevents repeated requests with unknown key IDs from overloading the identity provider.
             return;
         }
 
@@ -145,8 +132,8 @@ public class JwksKeyManager {
                 }
             }
 
-            // El conjunto valido solo se sustituye cuando la descarga ha
-            // sido correcta: un fallo no deja al servicio sin ninguna clave.
+            // The active key map is only replaced upon a successful fetch:
+            // a transient failure preserves existing keys.
             publicKeyMap.clear();
             publicKeyMap.putAll(claves);
             lastSuccessTime = now;

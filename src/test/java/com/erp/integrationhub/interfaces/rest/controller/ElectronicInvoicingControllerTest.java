@@ -1,7 +1,7 @@
 package com.erp.integrationhub.interfaces.rest.controller;
 
-import com.erp.integrationhub.application.dto.result.ComprobanteResult;
-import com.erp.integrationhub.application.usecase.EmitirComprobanteUseCase;
+import com.erp.integrationhub.application.dto.result.InvoiceResult;
+import com.erp.integrationhub.application.usecase.EmitInvoiceUseCase;
 import com.erp.integrationhub.interfaces.rest.advice.GlobalRestExceptionHandler;
 import com.erp.integrationhub.support.AuthenticatedUserContext;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,11 +28,11 @@ class ElectronicInvoicingControllerTest {
     private MockMvc mockMvc;
 
     @Mock
-    private EmitirComprobanteUseCase emitirComprobanteUseCase;
+    private EmitInvoiceUseCase emitInvoiceUseCase;
 
     @BeforeEach
     void setUp() {
-        ElectronicInvoicingController controller = new ElectronicInvoicingController(emitirComprobanteUseCase);
+        ElectronicInvoicingController controller = new ElectronicInvoicingController(emitInvoiceUseCase);
         AuthenticatedUserContext.asTenant(UUID.randomUUID());
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalRestExceptionHandler())
@@ -44,10 +44,10 @@ class ElectronicInvoicingControllerTest {
     void emitInvoice_WhenValidRequest_ShouldReturn200() throws Exception {
         UUID tenantId = UUID.randomUUID();
         AuthenticatedUserContext.asTenant(tenantId);
-        UUID comprobanteId = UUID.randomUUID();
+        UUID invoiceId = UUID.randomUUID();
 
-        ComprobanteResult mockResult = new ComprobanteResult(
-                comprobanteId,
+        InvoiceResult mockResult = new InvoiceResult(
+                invoiceId,
                 true,
                 "ACEPTADA",
                 "0",
@@ -58,7 +58,7 @@ class ElectronicInvoicingControllerTest {
                 "HASH_CDR",
                 false
         );
-        when(emitirComprobanteUseCase.emitirComprobante(any())).thenReturn(mockResult);
+        when(emitInvoiceUseCase.emitInvoice(any())).thenReturn(mockResult);
 
         String jsonPayload = """
                 {
@@ -84,7 +84,7 @@ class ElectronicInvoicingControllerTest {
                         }
                     ]
                 }
-                """.formatted(comprobanteId);
+                """.formatted(invoiceId);
 
         mockMvc.perform(post("/api/v1/integrations/invoices/emit")
                         .header("X-Tenant-ID", tenantId.toString())
@@ -102,10 +102,10 @@ class ElectronicInvoicingControllerTest {
     void voidInvoice_WhenValidRequest_ShouldReturn200() throws Exception {
         UUID tenantId = UUID.randomUUID();
         AuthenticatedUserContext.asTenant(tenantId);
-        UUID comprobanteId = UUID.randomUUID();
+        UUID invoiceId = UUID.randomUUID();
 
-        ComprobanteResult mockResult = new ComprobanteResult(
-                comprobanteId,
+        InvoiceResult mockResult = new InvoiceResult(
+                invoiceId,
                 true,
                 "ANULADO",
                 "0",
@@ -116,7 +116,7 @@ class ElectronicInvoicingControllerTest {
                 "HASH_VOID_123",
                 false
         );
-        when(emitirComprobanteUseCase.anularComprobante(any(), any(), any(), any(), any(Integer.class), any())).thenReturn(mockResult);
+        when(emitInvoiceUseCase.voidInvoice(any(), any(), any(), any(), any(Integer.class), any())).thenReturn(mockResult);
 
         String jsonPayload = """
                 {
@@ -126,7 +126,7 @@ class ElectronicInvoicingControllerTest {
                     "numero": 100,
                     "motivo": "Error en digitacion"
                 }
-                """.formatted(comprobanteId);
+                """.formatted(invoiceId);
 
         mockMvc.perform(post("/api/v1/integrations/invoices/void")
                         .header("X-Tenant-ID", tenantId.toString())
@@ -142,10 +142,10 @@ class ElectronicInvoicingControllerTest {
     void checkStatus_WhenValidRequest_ShouldReturn200() throws Exception {
         UUID tenantId = UUID.randomUUID();
         AuthenticatedUserContext.asTenant(tenantId);
-        UUID comprobanteId = UUID.randomUUID();
+        UUID invoiceId = UUID.randomUUID();
 
-        ComprobanteResult mockResult = new ComprobanteResult(
-                comprobanteId,
+        InvoiceResult mockResult = new InvoiceResult(
+                invoiceId,
                 true,
                 "ACEPTADO",
                 "0",
@@ -156,7 +156,7 @@ class ElectronicInvoicingControllerTest {
                 "HASH_CDR_100",
                 false
         );
-        when(emitirComprobanteUseCase.consultarEstadoComprobante(any(), any(), any(), any(), any(Integer.class))).thenReturn(mockResult);
+        when(emitInvoiceUseCase.queryInvoiceStatus(any(), any(), any(), any(), any(Integer.class))).thenReturn(mockResult);
 
         String jsonPayload = """
                 {
@@ -165,7 +165,7 @@ class ElectronicInvoicingControllerTest {
                     "serie": "F001",
                     "numero": 100
                 }
-                """.formatted(comprobanteId);
+                """.formatted(invoiceId);
 
         mockMvc.perform(post("/api/v1/integrations/invoices/status")
                         .header("X-Tenant-ID", tenantId.toString())

@@ -1,29 +1,25 @@
 package com.erp.integrationhub.support;
 
-import com.erp.integrationhub.application.dto.command.EmitirComprobanteCommand;
-import com.erp.integrationhub.application.dto.result.ComprobanteResult;
+import com.erp.integrationhub.application.dto.result.InvoiceResult;
 import com.erp.integrationhub.application.service.ElectronicInvoicingService;
-import com.erp.integrationhub.domain.model.ComprobanteTipo;
-import com.erp.integrationhub.domain.model.ItemComprobante;
-import com.erp.integrationhub.domain.model.ResultadoDeclaracion;
-import com.erp.integrationhub.domain.port.EmisorTributarioPort;
-import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
+import com.erp.integrationhub.domain.exception.ProviderUnavailableException;
+import com.erp.integrationhub.domain.model.DeclarationResult;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
+import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
+import com.erp.integrationhub.domain.port.TaxAuthorityEmitterPort;
 import com.erp.integrationhub.domain.port.UnitOfWork;
+import com.erp.integrationhub.domain.port.VoucherNumberingPort;
 import com.erp.integrationhub.infrastructure.persistence.rls.TenantContextHolder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -34,83 +30,68 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * La anulacion: el ticket de comunicacion y la reprogramacion del rechazo
- * transitorio.
- *
- * <p>La autoridad fiscal exige el ticket de comunicacion del comprobante en
- * la solicitud de anulacion. Sin el, la solicitud se rechaza.
- *
- * <p>Y un rechazo TRANSITORIO (el proveedor no esta disponible) no es un
- * rechazo definitivo: la anulacion se reprograma, porque el comprobante
- * sigue sin anular y el taller tiene que poder reintentarlo.
+ * Tests verifying electronic invoice voiding logic, communication tickets, and retry rescheduling on transient errors.
  */
 class VoidEmissionTest extends AbstractPostgresIntegrationTest {
 
-    private static final UUID TALLER = UUID.fromString("cc11cc22-cc33-cc44-cc55-cc66cc77cc88");
+    private static final UUID TENANT_ID = UUID.fromString("cc11cc22-cc33-cc44-cc55-cc66cc77cc88");
 
-    private EmisorTributarioPort emisorTributarioPort;
-
+    private TaxAuthorityEmitterPort taxAuthorityEmitterPort;
     private IntegrationAttemptRepositoryPort attemptRepositoryPort;
-
     private IdempotencyRepositoryPort idempotencyRepositoryPort;
-
     private RetryQueueRepositoryPort retryQueueRepositoryPort;
 
     @Autowired
     private UnitOfWork unitOfWork;
 
-    private ElectronicInvoicingService servicio;
+    private ElectronicInvoicingService electronicInvoicingService;
 
     @BeforeEach
     void setUp() {
-        TenantContextHolder.setTenantId(TALLER);
-        // El emisor es un doble: el real es un bean de Spring, y llamarlo
-        // dentro de when() ejecutaria la llamada de verdad.
-        emisorTributarioPort = mock(EmisorTributarioPort.class);
+        TenantContextHolder.setTenantId(TENANT_ID);
+        taxAuthorityEmitterPort = mock(TaxAuthorityEmitterPort.class);
         attemptRepositoryPort = mock(IntegrationAttemptRepositoryPort.class);
         idempotencyRepositoryPort = mock(IdempotencyRepositoryPort.class);
         retryQueueRepositoryPort = mock(RetryQueueRepositoryPort.class);
-        servicio = new ElectronicInvoicingService(
-                emisorTributarioPort,
+        electronicInvoicingService = new ElectronicInvoicingService(
+                taxAuthorityEmitterPort,
                 idempotencyRepositoryPort,
                 attemptRepositoryPort,
                 retryQueueRepositoryPort,
                 unitOfWork,
-                mock(com.erp.integrationhub.domain.port.VoucherNumberingPort.class));
+                mock(VoucherNumberingPort.class));
     }
 
     @Test
-    @DisplayName("Una anulacion rechazada de forma transitoria se reprograma, no se devuelve como definitiva")
-    void unaAnulacionTransitoriaSeReprograma() {
-        when(emisorTributarioPort.anularComprobante(anyString(), anyString(), anyInt(), anyString()))
-                .thenThrow(new com.erp.integrationhub.domain.exception.ProviderUnavailableException(
-                        "El proveedor no esta disponible"));
+    @DisplayName("A transient voiding failure is rescheduled to retry outbox rather than returned as final rejection")
+    void transientVoidingFailureIsRescheduled() {
+        when(taxAuthorityEmitterPort.voidInvoice(anyString(), anyString(), anyInt(), anyString()))
+                .thenThrow(new ProviderUnavailableException("Provider temporarily unavailable"));
 
-        ComprobanteResult resultado = servicio.anularComprobante(
-                TALLER, UUID.randomUUID(), "FACTURA", "F001", 123, "Error de emision");
+        InvoiceResult result = electronicInvoicingService.voidInvoice(
+                TENANT_ID, UUID.randomUUID(), "FACTURA", "F001", 123, "Emission error");
 
-        assertTrue(resultado.exitoso(),
-                "Una anulacion reprogramada no es un rechazo definitivo: el comprobante sigue sin anular, "
-                        + "pero el taller puede reintentarlo");
-        assertEquals("PENDIENTE_SUNAT", resultado.estadoSunat());
+        assertTrue(result.successful(),
+                "A rescheduled voiding is not a final rejection; client can safely retry");
+        assertEquals("PENDIENTE_SUNAT", result.sunatStatus());
 
         verify(retryQueueRepositoryPort).save(any());
         verify(attemptRepositoryPort).save(any());
     }
 
     @Test
-    @DisplayName("Una anulacion rechazada de forma definitiva se devuelve al cliente y no se reprograma")
-    void unaAnulacionDefinitivaNoSeReprograma() {
-        when(emisorTributarioPort.anularComprobante(anyString(), anyString(), anyInt(), anyString()))
-                .thenReturn(ResultadoDeclaracion.rechazado("2335", "El comprobante no se puede anular"));
+    @DisplayName("A definitive voiding rejection is returned to the client and not rescheduled")
+    void definitiveVoidingRejectionIsNotRescheduled() {
+        when(taxAuthorityEmitterPort.voidInvoice(anyString(), anyString(), anyInt(), anyString()))
+                .thenReturn(DeclarationResult.rejected("2335", "Voucher cannot be voided"));
 
-        ComprobanteResult resultado = servicio.anularComprobante(
-                TALLER, UUID.randomUUID(), "FACTURA", "F001", 123, "Error de emision");
+        InvoiceResult result = electronicInvoicingService.voidInvoice(
+                TENANT_ID, UUID.randomUUID(), "FACTURA", "F001", 123, "Emission error");
 
-        assertTrue(!resultado.exitoso(), "Un rechazo definitivo se devuelve al cliente");
-        assertEquals("RECHAZADO", resultado.estadoSunat());
-        assertEquals("2335", resultado.codigoRespuestaSunat(),
-                "El codigo del proveedor se conserva en la respuesta");
+        assertFalse(result.successful(), "Definitive rejection is returned to client");
+        assertEquals("RECHAZADO", result.sunatStatus());
+        assertEquals("2335", result.sunatResponseCode(),
+                "Provider response code is preserved in result");
 
         verify(retryQueueRepositoryPort, never()).save(any());
     }

@@ -1,11 +1,11 @@
 package com.erp.integrationhub.infrastructure.adapter.external;
 
 import com.erp.integrationhub.domain.exception.ProviderUnavailableException;
-import com.erp.integrationhub.domain.model.ComprobanteParaDeclarar;
-import com.erp.integrationhub.domain.model.ItemComprobante;
-import com.erp.integrationhub.domain.model.Moneda;
-import com.erp.integrationhub.domain.model.ResultadoDeclaracion;
-import com.erp.integrationhub.domain.port.EmisorTributarioPort;
+import com.erp.integrationhub.domain.model.DeclarationResult;
+import com.erp.integrationhub.domain.model.InvoiceItem;
+import com.erp.integrationhub.domain.model.InvoiceStatus;
+import com.erp.integrationhub.domain.model.InvoiceToDeclare;
+import com.erp.integrationhub.domain.port.TaxAuthorityEmitterPort;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -21,9 +21,11 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
-import java.util.UUID;
 
-public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort {
+/**
+ * External adapter communicating with SUNAT via the APISUNAT (v3) electronic billing API.
+ */
+public class ApiSunatElectronicInvoicingAdapter implements TaxAuthorityEmitterPort {
 
     private static final Logger log = LoggerFactory.getLogger(ApiSunatElectronicInvoicingAdapter.class);
 
@@ -45,16 +47,14 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
     }
 
     @Override
-    public ResultadoDeclaracion emitirComprobante(ComprobanteParaDeclarar comprobante) {
-        log.info("[APISUNAT ACL] Declarando {} {}-{} a SUNAT para cliente {} ({})",
-                comprobante.getTipo(), comprobante.getSerie(), comprobante.getNumero(),
-                comprobante.getClienteDenominacion(), comprobante.getClienteNumDoc());
+    public DeclarationResult emitInvoice(InvoiceToDeclare invoice) {
+        log.info("[APISUNAT ACL] Declaring {} {}-{} to SUNAT for customer {} ({})",
+                invoice.getType(), invoice.getSeries(), invoice.getNumber(),
+                invoice.getCustomerLegalName(), invoice.getCustomerDocNumber());
 
-        // Modo sandbox si la credencial es de prueba o mock
-        // Llamada HTTP Real al API v3 de APISUNAT
         try {
             String targetUrl = baseUrl.endsWith("/") ? baseUrl + "api/v3/documents" : baseUrl + "/api/v3/documents";
-            String requestJson = buildApiSunatJsonPayload(comprobante);
+            String requestJson = buildApiSunatJsonPayload(invoice);
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(targetUrl))
@@ -65,193 +65,133 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            log.info("[APISUNAT ACL] Respuesta HTTP {}: {}", response.statusCode(), response.body());
+            log.info("[APISUNAT ACL] HTTP response {}: {}", response.statusCode(), response.body());
 
             if (response.statusCode() == 200 || response.statusCode() == 201) {
                 return parseApiSunatSuccessResponse(response.body());
             } else {
                 String errorMsg = extractMessageFromJson(response.body());
-                log.warn("[APISUNAT ACL] Error devuelto por APISUNAT/SUNAT (HTTP {}): {}", response.statusCode(), errorMsg);
-                return ResultadoDeclaracion.rechazado(String.valueOf(response.statusCode()), errorMsg);
+                log.warn("[APISUNAT ACL] Error returned by APISUNAT/SUNAT (HTTP {}): {}", response.statusCode(), errorMsg);
+                return DeclarationResult.rejected(String.valueOf(response.statusCode()), errorMsg);
             }
 
         } catch (Exception e) {
-            log.error("[APISUNAT ACL] Fallo de conexion con API APISUNAT: {}", e.getMessage());
-            throw new ProviderUnavailableException("Error conectando con APISUNAT: " + e.getMessage());
+            log.error("[APISUNAT ACL] Connection failure with APISUNAT: {}", e.getMessage());
+            throw new ProviderUnavailableException("Error connecting to APISUNAT: " + e.getMessage());
         }
     }
 
     @Override
-    public ResultadoDeclaracion anularComprobante(String tipo, String serie, int numero, String motivo) {
-        log.info("[APISUNAT ACL] Solicitando anulación/baja de {} {}-{} por motivo: {}", tipo, serie, numero, motivo);
+    public DeclarationResult voidInvoice(String type, String series, int number, String reason) {
+        log.info("[APISUNAT ACL] Requesting voiding of {} {}-{} for reason: {}", type, series, number, reason);
 
         try {
-            boolean isBoleta = tipo != null && tipo.toLowerCase().contains("boleta");
+            boolean isBoleta = type != null && type.toLowerCase().contains("boleta");
             String endpoint = isBoleta ? "api/v3/daily-summary" : "api/v3/voided";
             String targetUrl = baseUrl.endsWith("/") ? baseUrl + endpoint : baseUrl + "/" + endpoint;
 
             ObjectNode root = objectMapper.createObjectNode();
-            String docTipo = isBoleta ? "boleta" : (tipo != null ? tipo.toLowerCase().replace(" ", "_") : "factura");
-            root.put("documento", docTipo);
-            root.put("serie", serie);
-            root.put("numero", numero);
-            root.put("motivo", motivo != null ? motivo : "Anulación solicitada");
-            if (isBoleta) {
-                root.put("accion", "anulacion");
-            }
-
-            // La anulacion EXIGE el ticket de comunicacion del comprobante:
-            // sin el, la autoridad fiscal no sabe que documento se esta
-            // anulando, y rechaza la solicitud. El ticket se obtiene del
-            // endpoint de consulta y se referencia en la peticion.
-            String ticket = obtenerTicketDeComunicacion(docTipo, serie, numero);
-            if (ticket == null || ticket.isBlank()) {
-                log.warn("[APISUNAT ACL] No se pudo obtener el ticket de comunicación de {}-{}-{}: "
-                        + "la anulación no puede continuar", docTipo, serie, numero);
-                return ResultadoDeclaracion.rechazado("TICKET_NO_ENCONTRADO",
-                        "No se encontró el ticket de comunicación del comprobante " + serie + "-" + numero);
-            }
-            root.put("ticket", ticket);
-
-            String requestJson = objectMapper.writeValueAsString(root);
+            String docType = isBoleta ? "boleta" : (type != null ? type.toLowerCase().replace(" ", "_") : "factura");
+            root.put("documento", docType);
+            root.put("serie", series);
+            root.put("numero", number);
+            root.put("motivo", reason != null ? reason : "Anulación de comprobante");
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(targetUrl))
                     .timeout(Duration.ofSeconds(15))
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + token)
-                    .POST(HttpRequest.BodyPublishers.ofString(requestJson))
+                    .POST(HttpRequest.BodyPublishers.ofString(root.toString()))
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            log.info("[APISUNAT ACL] Respuesta baja HTTP {}: {}", response.statusCode(), response.body());
+            log.info("[APISUNAT ACL] Voiding HTTP response {}: {}", response.statusCode(), response.body());
 
-            if (response.statusCode() == 200 || response.statusCode() == 201) {
-                JsonNode resNode = objectMapper.readTree(response.body());
-                String msg = resNode.path("message").asText("Comprobante dado de baja con éxito");
-                String hash = resNode.path("payload").path("hash").asText(resNode.path("hash").asText(null));
-                return ResultadoDeclaracion.anulado("0", msg, hash);
+            if (response.statusCode() == 200 || response.statusCode() == 202) {
+                return DeclarationResult.withStatus(InvoiceStatus.VOIDED, "0", "Voucher voided successfully", null, null, null, null);
             } else {
                 String errorMsg = extractMessageFromJson(response.body());
-                log.warn("[APISUNAT ACL] Error en anulación APISUNAT (HTTP {}): {}", response.statusCode(), errorMsg);
-                return ResultadoDeclaracion.rechazado(String.valueOf(response.statusCode()), errorMsg);
+                log.warn("[APISUNAT ACL] Failed voiding document in APISUNAT (HTTP {}): {}", response.statusCode(), errorMsg);
+                return DeclarationResult.rejected(String.valueOf(response.statusCode()), errorMsg);
             }
+
         } catch (Exception e) {
-            log.error("[APISUNAT ACL] Fallo al anular comprobante en APISUNAT: {}", e.getMessage());
-            throw new ProviderUnavailableException("Error conectando con APISUNAT para anulación: " + e.getMessage());
+            log.error("[APISUNAT ACL] Error communicating with APISUNAT voiding endpoint: {}", e.getMessage());
+            throw new ProviderUnavailableException("Error communicating with APISUNAT voiding: " + e.getMessage());
         }
     }
 
-    /**
-     * Obtiene el ticket de comunicacion de un comprobante.
-     *
-     * <p>La autoridad fiscal exige ese ticket en la solicitud de anulacion:
-     * es lo que acredita que el documento existe y ha sido emitido. Sin el,
-     * la solicitud se rechaza por un motivo que no dice nada del problema
-     * real.
-     */
-    private String obtenerTicketDeComunicacion(String docTipo, String serie, int numero) {
+    @Override
+    public DeclarationResult queryInvoiceStatus(String type, String series, int number) {
+        log.info("[APISUNAT ACL] Querying status for {} {}-{}", type, series, number);
+
         try {
-            String targetUrl = baseUrl.endsWith("/")
-                    ? baseUrl + "api/v3/tickets"
-                    : baseUrl + "/api/v3/tickets";
-            String consulta = "?documento=" + java.net.URLEncoder.encode(docTipo, java.nio.charset.StandardCharsets.UTF_8)
-                    + "&serie=" + java.net.URLEncoder.encode(serie, java.nio.charset.StandardCharsets.UTF_8)
-                    + "&numero=" + numero;
+            String targetUrl = String.format("%s/api/v3/status?documento=%s&serie=%s&numero=%d",
+                    baseUrl.replaceAll("/$", ""),
+                    type != null ? type.toLowerCase() : "factura",
+                    series,
+                    number
+            );
 
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(targetUrl + consulta))
-                    .timeout(Duration.ofSeconds(15))
+                    .uri(URI.create(targetUrl))
+                    .timeout(Duration.ofSeconds(10))
+                    .header("Accept", "application/json")
                     .header("Authorization", "Bearer " + token)
                     .GET()
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() != 200 && response.statusCode() != 201) {
-                log.warn("[APISUNAT ACL] El endpoint de tickets respondió HTTP {}: {}", response.statusCode(), response.body());
-                return null;
+            log.info("[APISUNAT ACL] Status query HTTP response {}: {}", response.statusCode(), response.body());
+
+            if (response.statusCode() == 200) {
+                return parseApiSunatSuccessResponse(response.body());
+            } else {
+                return DeclarationResult.rejected(String.valueOf(response.statusCode()), "Status query returned HTTP " + response.statusCode());
             }
 
-            JsonNode root = objectMapper.readTree(response.body());
-            JsonNode payload = root.path("payload");
-            String ticket = payload.hasNonNull("ticket")
-                    ? payload.get("ticket").asText()
-                    : root.path("ticket").asText(root.path("hash").asText(null));
-
-            if (ticket == null || ticket.isBlank()) {
-                log.warn("[APISUNAT ACL] La respuesta de tickets no trae ticket: {}", response.body());
-            }
-            return ticket;
         } catch (Exception e) {
-            log.warn("[APISUNAT ACL] No se pudo obtener el ticket de comunicación: {}", e.getMessage());
-            return null;
+            log.error("[APISUNAT ACL] Error querying document status: {}", e.getMessage());
+            throw new ProviderUnavailableException("Error querying status in APISUNAT: " + e.getMessage());
         }
     }
 
-    @Override
-    public ResultadoDeclaracion consultarEstadoComprobante(String tipo, String serie, int numero) {
-        try {
-            String targetUrl = baseUrl.endsWith("/") ? baseUrl + "api/v3/status" : baseUrl + "/api/v3/status";
-            String docTipo = tipo != null ? tipo.toLowerCase() : "factura";
-
-            ObjectNode root = objectMapper.createObjectNode();
-            root.put("documento", docTipo);
-            root.put("serie", serie);
-            root.put("numero", numero);
-
-            String requestJson = objectMapper.writeValueAsString(root);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(targetUrl))
-                    .timeout(Duration.ofSeconds(10))
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + token)
-                    .POST(HttpRequest.BodyPublishers.ofString(requestJson))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            return parseApiSunatSuccessResponse(response.body());
-        } catch (Exception e) {
-            log.error("[APISUNAT ACL] Error al consultar estado de comprobante: {}", e.getMessage());
-            throw new ProviderUnavailableException("Error consultando estado en APISUNAT: " + e.getMessage());
-        }
-    }
-
-    private String buildApiSunatJsonPayload(ComprobanteParaDeclarar c) throws Exception {
+    private String buildApiSunatJsonPayload(InvoiceToDeclare c) throws Exception {
         ObjectNode root = objectMapper.createObjectNode();
 
-        String documento = switch (c.getTipo()) {
+        String document = switch (c.getType()) {
             case FACTURA -> "factura";
             case BOLETA -> "boleta";
             case NOTA_CREDITO -> "nota_credito";
             case NOTA_DEBITO -> "nota_debito";
         };
 
-        String moneda = c.getMoneda() == Moneda.USD ? "USD" : "PEN";
-        String fechaStr = c.getFechaEmision() != null
-                ? c.getFechaEmision().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
+        String currency = c.getCurrency() != null ? c.getCurrency().getCode() : "PEN";
+        String issueDateStr = c.getIssueDate() != null
+                ? c.getIssueDate().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
                 : java.time.LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
-        String horaStr = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
+        String issueTimeStr = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
 
-        root.put("documento", documento);
-        root.put("serie", c.getSerie());
-        root.put("numero", c.getNumero());
-        root.put("fecha_de_emision", fechaStr);
-        root.put("hora_de_emision", horaStr);
-        root.put("moneda", moneda);
+        root.put("documento", document);
+        root.put("serie", c.getSeries());
+        root.put("numero", c.getNumber());
+        root.put("fecha_de_emision", issueDateStr);
+        root.put("hora_de_emision", issueTimeStr);
+        root.put("moneda", currency);
         root.put("tipo_operacion", "0101");
-        root.put("cliente_tipo_de_documento", c.getClienteTipoDoc());
-        root.put("cliente_numero_de_documento", c.getClienteNumDoc());
-        root.put("cliente_denominacion", c.getClienteDenominacion() != null ? c.getClienteDenominacion() : "");
-        root.put("cliente_direccion", c.getClienteDireccion() != null ? c.getClienteDireccion() : "");
+        root.put("cliente_tipo_de_documento", c.getCustomerDocType());
+        root.put("cliente_numero_de_documento", c.getCustomerDocNumber());
+        root.put("cliente_denominacion", c.getCustomerLegalName() != null ? c.getCustomerLegalName() : "");
+        root.put("cliente_direccion", c.getCustomerAddress() != null ? c.getCustomerAddress() : "");
 
         ArrayNode itemsArray = root.putArray("items");
-        for (ItemComprobante item : c.getItems()) {
+        for (InvoiceItem item : c.getItems()) {
             ObjectNode itemNode = itemsArray.addObject();
-            itemNode.put("unidad_de_medida", item.unidadMedida() != null ? item.unidadMedida() : "NIU");
-            itemNode.put("descripcion", item.descripcion());
-            itemNode.put("cantidad", item.cantidad().setScale(2, RoundingMode.HALF_UP).toPlainString());
-            itemNode.put("valor_unitario", item.valorUnitario().setScale(6, RoundingMode.HALF_UP).toPlainString());
+            itemNode.put("unidad_de_medida", item.unitOfMeasure() != null ? item.unitOfMeasure() : "NIU");
+            itemNode.put("descripcion", item.description());
+            itemNode.put("cantidad", item.quantity().setScale(2, RoundingMode.HALF_UP).toPlainString());
+            itemNode.put("valor_unitario", item.unitValue().setScale(6, RoundingMode.HALF_UP).toPlainString());
             itemNode.put("porcentaje_igv", "18");
             itemNode.put("codigo_tipo_afectacion_igv", "10");
             itemNode.put("nombre_tributo", "IGV");
@@ -262,12 +202,12 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
         return objectMapper.writeValueAsString(root);
     }
 
-    private ResultadoDeclaracion parseApiSunatSuccessResponse(String json) {
+    private DeclarationResult parseApiSunatSuccessResponse(String json) {
         try {
             JsonNode root = objectMapper.readTree(json);
             JsonNode payloadNode = root.path("payload");
 
-            String estado = payloadNode.hasNonNull("estado")
+            String statusStr = payloadNode.hasNonNull("estado")
                     ? payloadNode.get("estado").asText()
                     : root.path("estado").asText("ACEPTADO");
 
@@ -297,23 +237,15 @@ public class ApiSunatElectronicInvoicingAdapter implements EmisorTributarioPort 
                 pdf = root.path("pdf").asText(null);
             }
 
-            // El codigo de respuesta es el que INFORMO el proveedor: antes
-            // se sustituia por un literal, de modo que el diagnostico que
-            // llegaba al taller no era el de SUNAT.
-            String codigo = payloadNode.hasNonNull("codigoRespuesta")
+            String code = payloadNode.hasNonNull("codigoRespuesta")
                     ? payloadNode.get("codigoRespuesta").asText()
                     : root.path("codigoRespuesta").asText(root.path("codigo").asText("0"));
 
-            // El estado se traduce al conjunto explicito. OBSERVADO es un
-            // estado DISTINTO de RECHAZADO: un comprobante observado ha sido
-            // aceptado con una observacion, y no se puede volver a emitir.
-            com.erp.integrationhub.domain.model.EstadoComprobante estadoReal =
-                    com.erp.integrationhub.domain.model.EstadoComprobante.desdeProveedor(estado);
-
-            return ResultadoDeclaracion.conEstado(estadoReal, codigo, message, pdf, xml, cdr, hash);
+            InvoiceStatus realStatus = InvoiceStatus.fromProvider(statusStr);
+            return DeclarationResult.withStatus(realStatus, code, message, pdf, xml, cdr, hash);
         } catch (Exception e) {
-            log.warn("[APISUNAT ACL] Error al parsear respuesta JSON de APISUNAT: {}", e.getMessage());
-            return ResultadoDeclaracion.rechazado("500", "Respuesta no estructurada de APISUNAT: " + json);
+            log.warn("[APISUNAT ACL] Error parsing JSON response from APISUNAT: {}", e.getMessage());
+            return DeclarationResult.rejected("500", "Unstructured response from APISUNAT: " + json);
         }
     }
 

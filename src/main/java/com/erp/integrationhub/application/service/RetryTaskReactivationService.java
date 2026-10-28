@@ -9,7 +9,7 @@ import com.erp.integrationhub.domain.usecase.ReactivateRetryTaskUseCase;
 import java.util.UUID;
 
 /**
- * Reactivacion de una tarea en cola de muertos.
+ * Application service for reactivating Dead Letter Queue (DLQ) tasks back to the retry queue.
  */
 public class RetryTaskReactivationService implements ReactivateRetryTaskUseCase {
 

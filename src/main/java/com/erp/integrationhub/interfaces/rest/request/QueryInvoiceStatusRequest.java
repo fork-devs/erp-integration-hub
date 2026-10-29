@@ -14,17 +14,17 @@ public record QueryInvoiceStatusRequest(
         @JsonAlias("comprobanteId")
         UUID invoiceId,
 
-        @NotBlank(message = "Document type is required (factura, boleta, nota_credito, nota_debito)")
+        @NotBlank(message = "{validation.hub.query-invoice.type.not-blank}")
         @JsonProperty("type")
         @JsonAlias("tipo")
         String type,
 
-        @NotBlank(message = "Series is required (e.g., F001, B001)")
+        @NotBlank(message = "{validation.hub.query-invoice.series.not-blank}")
         @JsonProperty("series")
         @JsonAlias("serie")
         String series,
 
-        @NotNull(message = "Sequential document number is required")
+        @NotNull(message = "{validation.hub.query-invoice.number.not-null}")
         @JsonProperty("number")
         @JsonAlias("numero")
         Integer number

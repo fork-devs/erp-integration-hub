@@ -20,32 +20,32 @@ public record EmitInvoiceRequest(
         @JsonAlias("comprobanteId")
         UUID invoiceId,
 
-        @NotBlank(message = "Invoice type is required (FACTURA, BOLETA, NOTA_CREDITO)")
+        @NotBlank(message = "{validation.hub.invoice.type.not-blank}")
         @JsonProperty("type")
         @JsonAlias("tipo")
         String type,
 
-        @NotBlank(message = "Series is required (e.g., F001, B001)")
+        @NotBlank(message = "{validation.hub.invoice.series.not-blank}")
         @JsonProperty("series")
         @JsonAlias("serie")
         String series,
 
-        @NotNull(message = "Sequential document number is required")
+        @NotNull(message = "{validation.hub.invoice.number.not-null}")
         @JsonProperty("number")
         @JsonAlias("numero")
         Integer number,
 
-        @NotBlank(message = "Customer document type is required (6=RUC, 1=DNI)")
+        @NotBlank(message = "{validation.hub.invoice.customer-doc-type.not-blank}")
         @JsonProperty("customerDocType")
         @JsonAlias("clienteTipoDoc")
         String customerDocType,
 
-        @NotBlank(message = "Customer document number is required")
+        @NotBlank(message = "{validation.hub.invoice.customer-doc-number.not-blank}")
         @JsonProperty("customerDocNumber")
         @JsonAlias("clienteNumDoc")
         String customerDocNumber,
 
-        @NotBlank(message = "Customer legal name is required")
+        @NotBlank(message = "{validation.hub.invoice.customer-legal-name.not-blank}")
         @JsonProperty("customerLegalName")
         @JsonAlias("clienteDenominacion")
         String customerLegalName,
@@ -62,24 +62,24 @@ public record EmitInvoiceRequest(
         @JsonAlias("moneda")
         String currency,
 
-        @NotNull(message = "Taxable total is required")
-        @DecimalMin(value = "0.0", inclusive = true, message = "Taxable total cannot be negative")
+        @NotNull(message = "{validation.hub.invoice.total-taxable.not-null}")
+        @DecimalMin(value = "0.0", inclusive = true, message = "{validation.hub.invoice.total-taxable.min}")
         @JsonProperty("totalTaxable")
         @JsonAlias("totalGravada")
         BigDecimal totalTaxable,
 
-        @NotNull(message = "Total tax (IGV) is required")
-        @DecimalMin(value = "0.0", inclusive = true, message = "Total tax cannot be negative")
+        @NotNull(message = "{validation.hub.invoice.total-tax.not-null}")
+        @DecimalMin(value = "0.0", inclusive = true, message = "{validation.hub.invoice.total-tax.min}")
         @JsonProperty("totalTax")
         @JsonAlias("totalIgv")
         BigDecimal totalTax,
 
-        @NotNull(message = "Total is required")
-        @DecimalMin(value = "0.01", message = "Total must be greater than 0")
+        @NotNull(message = "{validation.hub.invoice.total.not-null}")
+        @DecimalMin(value = "0.01", message = "{validation.hub.invoice.total.min}")
         @JsonProperty("total")
         BigDecimal total,
 
-        @NotEmpty(message = "Invoice must contain at least one line item")
+        @NotEmpty(message = "{validation.hub.invoice.items.not-empty}")
         @Valid
         @JsonProperty("items")
         List<InvoiceItemRequest> items,

@@ -11,42 +11,42 @@ import java.math.BigDecimal;
  * REST request line item for invoice emission.
  */
 public record InvoiceItemRequest(
-        @NotBlank(message = "Unit of measure is required (e.g., NIU, ZZ)")
+        @NotBlank(message = "{validation.hub.invoice-item.unit-of-measure.not-blank}")
         @JsonProperty("unitOfMeasure")
         @JsonAlias("unidadMedida")
         String unitOfMeasure,
 
-        @NotBlank(message = "Item description is required")
+        @NotBlank(message = "{validation.hub.invoice-item.description.not-blank}")
         @JsonProperty("description")
         @JsonAlias("descripcion")
         String description,
 
-        @NotNull(message = "Quantity is required")
-        @DecimalMin(value = "0.01", message = "Quantity must be greater than 0")
+        @NotNull(message = "{validation.hub.invoice-item.quantity.not-null}")
+        @DecimalMin(value = "0.01", message = "{validation.hub.invoice-item.quantity.min}")
         @JsonProperty("quantity")
         @JsonAlias("cantidad")
         BigDecimal quantity,
 
-        @NotNull(message = "Unit value before tax is required")
-        @DecimalMin(value = "0.0", inclusive = true, message = "Unit value cannot be negative")
+        @NotNull(message = "{validation.hub.invoice-item.unit-value.not-null}")
+        @DecimalMin(value = "0.0", inclusive = true, message = "{validation.hub.invoice-item.unit-value.min}")
         @JsonProperty("unitValue")
         @JsonAlias("valorUnitario")
         BigDecimal unitValue,
 
-        @NotNull(message = "Unit price inclusive of tax is required")
-        @DecimalMin(value = "0.0", inclusive = true, message = "Unit price cannot be negative")
+        @NotNull(message = "{validation.hub.invoice-item.unit-price.not-null}")
+        @DecimalMin(value = "0.0", inclusive = true, message = "{validation.hub.invoice-item.unit-price.min}")
         @JsonProperty("unitPrice")
         @JsonAlias("precioUnitario")
         BigDecimal unitPrice,
 
-        @NotNull(message = "Tax amount (IGV) is required")
-        @DecimalMin(value = "0.0", inclusive = true, message = "Tax amount cannot be negative")
+        @NotNull(message = "{validation.hub.invoice-item.tax-amount.not-null}")
+        @DecimalMin(value = "0.0", inclusive = true, message = "{validation.hub.invoice-item.tax-amount.min}")
         @JsonProperty("taxAmount")
         @JsonAlias({"igv", "taxAmount"})
         BigDecimal taxAmount,
 
-        @NotNull(message = "Total is required")
-        @DecimalMin(value = "0.0", inclusive = true, message = "Total cannot be negative")
+        @NotNull(message = "{validation.hub.invoice-item.total.not-null}")
+        @DecimalMin(value = "0.0", inclusive = true, message = "{validation.hub.invoice-item.total.min}")
         @JsonProperty("total")
         BigDecimal total
 ) {

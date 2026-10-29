@@ -15,8 +15,8 @@ public record ProcessPaymentRequest(
         @JsonProperty("paymentId")
         UUID paymentId,
 
-        @NotNull(message = "Charge amount is required")
-        @DecimalMin(value = "0.50", message = "Minimum charge amount is 0.50")
+        @NotNull(message = "{validation.hub.payment.amount.not-null}")
+        @DecimalMin(value = "0.50", message = "{validation.hub.payment.amount.min}")
         @JsonProperty("amount")
         @JsonAlias("monto")
         BigDecimal amount,
@@ -25,12 +25,12 @@ public record ProcessPaymentRequest(
         @JsonAlias("moneda")
         String currency,
 
-        @NotBlank(message = "Card token or payment method ID is required")
+        @NotBlank(message = "{validation.hub.payment.card-token.not-blank}")
         @JsonProperty("cardToken")
         @JsonAlias("tokenTarjeta")
         String cardToken,
 
-        @NotBlank(message = "Charge description is required")
+        @NotBlank(message = "{validation.hub.payment.description.not-blank}")
         @JsonProperty("description")
         @JsonAlias("descripcion")
         String description,

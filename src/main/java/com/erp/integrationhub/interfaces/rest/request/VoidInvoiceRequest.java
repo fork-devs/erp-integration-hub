@@ -14,22 +14,22 @@ public record VoidInvoiceRequest(
         @JsonAlias("comprobanteId")
         UUID invoiceId,
 
-        @NotBlank(message = "Document type is required (factura, boleta, nota_credito, nota_debito)")
+        @NotBlank(message = "{validation.hub.void-invoice.type.not-blank}")
         @JsonProperty("type")
         @JsonAlias("tipo")
         String type,
 
-        @NotBlank(message = "Series is required (e.g., F001, B001)")
+        @NotBlank(message = "{validation.hub.void-invoice.series.not-blank}")
         @JsonProperty("series")
         @JsonAlias("serie")
         String series,
 
-        @NotNull(message = "Sequential document number is required")
+        @NotNull(message = "{validation.hub.void-invoice.number.not-null}")
         @JsonProperty("number")
         @JsonAlias("numero")
         Integer number,
 
-        @NotBlank(message = "Voiding reason is required")
+        @NotBlank(message = "{validation.hub.void-invoice.reason.not-blank}")
         @JsonProperty("reason")
         @JsonAlias("motivo")
         String reason

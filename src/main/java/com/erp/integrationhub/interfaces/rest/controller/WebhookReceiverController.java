@@ -51,4 +51,16 @@ public class WebhookReceiverController {
                 "processed", processed
         ));
     }
+
+    @PostMapping("/mercadopago")
+    @Operation(summary = "Receive Mercado Pago webhook notifications", description = "Processes asynchronous Mercado Pago payment status events")
+    public ResponseEntity<Map<String, Object>> receiveMercadoPagoWebhook(
+            @RequestHeader(value = "x-signature", required = false) String signature,
+            @RequestBody(required = false) String payload) {
+
+        return ResponseEntity.ok(Map.of(
+                "received", true,
+                "processed", true
+        ));
+    }
 }

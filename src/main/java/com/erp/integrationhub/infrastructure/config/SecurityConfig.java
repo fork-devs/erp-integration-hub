@@ -54,6 +54,8 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 // Public Documentation and Health checks
                 .requestMatchers(
+                    "/",
+                    "/health",
                     "/actuator/**",
                     "/swagger-ui/**",
                     "/swagger-ui.html",

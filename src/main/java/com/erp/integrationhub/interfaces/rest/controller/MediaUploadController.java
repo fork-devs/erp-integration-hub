@@ -2,6 +2,7 @@ package com.erp.integrationhub.interfaces.rest.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -23,6 +24,9 @@ public class MediaUploadController {
             "image/jpeg", "image/png", "image/webp", "image/gif", "image/svg+xml", "image/avif"
     );
 
+    @Value("${erp.integration.storage.public-url:https://8d009c5a27b703c2906fd1b00b96908c.r2.cloudflarestorage.com/driveos}")
+    private String storagePublicUrl = "https://8d009c5a27b703c2906fd1b00b96908c.r2.cloudflarestorage.com/driveos";
+
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("isAuthenticated()")
     @Operation(summary = "Upload image file", description = "Uploads an image to cloud CDN storage in an organized folder")
@@ -43,10 +47,8 @@ public class MediaUploadController {
         String originalFilename = file.getOriginalFilename() != null ? file.getOriginalFilename() : "upload.jpg";
         String cleanName = originalFilename.replaceAll("[^a-zA-Z0-9.-]", "_");
         String uniqueName = UUID.randomUUID().toString().substring(0, 8) + "-" + cleanName;
-        long timestamp = Instant.now().getEpochSecond();
 
-        String cdnUrl = String.format("https://res.cloudinary.com/shiftiq/image/upload/v%d/%s/%s",
-                timestamp, sanitizedFolder, uniqueName);
+        String cdnUrl = String.format("%s/%s/%s", storagePublicUrl, sanitizedFolder, uniqueName);
 
         return ResponseEntity.status(HttpStatus.CREATED).body(Map.of("url", cdnUrl));
     }

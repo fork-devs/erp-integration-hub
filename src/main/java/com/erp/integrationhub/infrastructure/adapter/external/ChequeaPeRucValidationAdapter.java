@@ -49,13 +49,23 @@ public class ChequeaPeRucValidationAdapter implements IdentityValidatorPort {
         }
 
         try {
-            String targetUrl = baseUrl.endsWith("/") ? baseUrl + "ruc/" + ruc : baseUrl + "/ruc/" + ruc;
+            String cleanBase = baseUrl.replaceAll("/+$", "");
+            boolean isChequeaLive = cleanBase.contains("chequea.pe");
+            String targetUrl = isChequeaLive
+                    ? (cleanBase.endsWith("/v1") ? cleanBase.replaceFirst("/v1$", "/api/v1/ruc/batch") : cleanBase + "/ruc/batch")
+                    : (cleanBase + "/ruc/" + ruc);
 
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(targetUrl))
                     .timeout(Duration.ofSeconds(10))
-                    .header("Accept", "application/json")
-                    .GET();
+                    .header("Accept", "application/json");
+
+            if (isChequeaLive) {
+                requestBuilder.header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString("{\"rucs\":[\"" + ruc + "\"]}"));
+            } else {
+                requestBuilder.GET();
+            }
 
             if (!token.isBlank()) {
                 requestBuilder.header("Authorization", "Bearer " + token);
@@ -116,7 +126,29 @@ public class ChequeaPeRucValidationAdapter implements IdentityValidatorPort {
                 return QueryRucResult.invalid(ruc);
             }
 
-            JsonNode targetNode = root.hasNonNull("data") ? root.get("data") : root;
+            JsonNode targetNode = root;
+
+            if (root.has("results") && root.get("results").isArray()) {
+                boolean found = false;
+                for (JsonNode res : root.get("results")) {
+                    if (ruc.equals(res.path("ruc").asText())) {
+                        if (!"ok".equalsIgnoreCase(res.path("status").asText())) {
+                            log.info("[CHEQUEA.PE ACL] RUC {} not found in batch results", ruc);
+                            return QueryRucResult.invalid(ruc);
+                        }
+                        if (res.hasNonNull("data")) {
+                            targetNode = res.get("data");
+                            found = true;
+                        }
+                        break;
+                    }
+                }
+                if (!found && targetNode == root) {
+                    return QueryRucResult.invalid(ruc);
+                }
+            } else if (root.hasNonNull("data")) {
+                targetNode = root.get("data");
+            }
 
             String legalName = extractField(targetNode, root, "razon_social", "nombre_o_razon_social", "razonSocial", "nombre");
 

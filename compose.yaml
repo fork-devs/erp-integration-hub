@@ -5,24 +5,32 @@ services:
     environment:
       POSTGRES_DB: erp_integration_db
       POSTGRES_USER: integration_user
-      POSTGRES_PASSWORD: integration_secret
-      # El rol de ejecucion (erp_app) y el de plataforma (erp_platform) los
-      # crean las migraciones que conceden los permisos. Sus contrasenas las
-      # fija la aplicacion en ERP_APP_DB_PASSWORD y
-      # ERP_PLATFORM_ROLE_PASSWORD (ver .env.example), que son los valores
-      # que las migraciones aplican como placeholders.
+      POSTGRES_PASSWORD: ${SPRING_FLYWAY_PASSWORD:?defina SPRING_FLYWAY_PASSWORD con la contrasena del rol propietario}
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - erp_integration_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U integration_user -d erp_integration_db']
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   erp-integration-redis:
     image: redis:7-alpine
     container_name: erp-integration-redis
+    command: ['redis-server', '--requirepass', '${REDIS_PASSWORD:?defina REDIS_PASSWORD con la contrasena de la cache}']
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?defina REDIS_PASSWORD con la contrasena de la cache}
     ports:
-      - "6382:6379"
+      - "127.0.0.1:6382:6379"
     volumes:
       - erp_integration_redisdata:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli -a "$$REDIS_PASSWORD" ping | grep -q PONG']
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   erp_integration_pgdata:

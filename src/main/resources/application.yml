@@ -104,8 +104,12 @@ erp:
       sandbox-mode: ${STRIPE_SANDBOX_MODE:true}
     chequea:
       base-url: ${CHEQUEA_BASE_URL:https://api.chequea.pe/v1}
-      token: ${CHEQUEA_TOKEN:sandbox_chequea_token}
-      sandbox-mode: ${CHEQUEA_SANDBOX_MODE:true}
+      token: ${CHEQUEA_TOKEN:ak_live_QveW-lhQq5HY3ezsdyBqY_ttIKRDm4UHLsms8aT5kzw}
+      sandbox-mode: ${CHEQUEA_SANDBOX_MODE:false}
+    factiliza:
+      base-url: ${FACTILIZA_BASE_URL:https://api.factiliza.com/pe/v1}
+      token: ${FACTILIZA_TOKEN:eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MjcyOSJ9.cUmqeCgoNOFj1LXiZHLmIKfUkobStMBNhvKfsAzL_6U}
+      sandbox-mode: ${FACTILIZA_SANDBOX_MODE:false}
     apiperu:
       base-url: ${APIPERU_BASE_URL:https://apiperu.dev/api}
       token: ${APIPERU_TOKEN:sandbox_apiperu_token}

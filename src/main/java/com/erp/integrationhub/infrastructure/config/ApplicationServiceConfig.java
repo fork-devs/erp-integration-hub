@@ -64,6 +64,15 @@ public class ApplicationServiceConfig {
     @Value("${erp.integration.chequea.sandbox-mode:true}")
     private boolean chequeaSandboxMode;
 
+    @Value("${erp.integration.factiliza.base-url:https://api.factiliza.com/pe/v1}")
+    private String factilizaBaseUrl;
+
+    @Value("${erp.integration.factiliza.token:sandbox_factiliza_token}")
+    private String factilizaToken;
+
+    @Value("${erp.integration.factiliza.sandbox-mode:false}")
+    private boolean factilizaSandboxMode;
+
     @Value("${erp.integration.apiperu.base-url:https://apiperu.dev/api}")
     private String apiperuBaseUrl;
 
@@ -119,10 +128,17 @@ public class ApplicationServiceConfig {
     public IdentityValidationService identityValidationService(
             IdentityValidatorPort identityValidatorPort,
             VehicleValidatorPort vehicleValidatorPort,
+            com.erp.integrationhub.domain.port.PersonalIdentityValidatorPort personalIdentityValidatorPort,
             IdentityCachePort identityCachePort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             UnitOfWork unitOfWork) {
-        return new IdentityValidationService(identityValidatorPort, vehicleValidatorPort, identityCachePort, attemptRepositoryPort, unitOfWork);
+        return new IdentityValidationService(
+                identityValidatorPort,
+                vehicleValidatorPort,
+                personalIdentityValidatorPort,
+                identityCachePort,
+                attemptRepositoryPort,
+                unitOfWork);
     }
 
     @Bean

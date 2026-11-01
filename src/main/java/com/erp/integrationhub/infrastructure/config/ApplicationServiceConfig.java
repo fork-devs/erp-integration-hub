@@ -64,6 +64,15 @@ public class ApplicationServiceConfig {
     @Value("${erp.integration.chequea.sandbox-mode:true}")
     private boolean chequeaSandboxMode;
 
+    @Value("${erp.integration.factiliza.base-url:https://api.factiliza.com/pe/v1}")
+    private String factilizaBaseUrl;
+
+    @Value("${erp.integration.factiliza.token:sandbox_factiliza_token}")
+    private String factilizaToken;
+
+    @Value("${erp.integration.factiliza.sandbox-mode:false}")
+    private boolean factilizaSandboxMode;
+
     @Value("${erp.integration.apiperu.base-url:https://apiperu.dev/api}")
     private String apiperuBaseUrl;
 

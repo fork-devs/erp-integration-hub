@@ -2,14 +2,17 @@ package com.erp.integrationhub.infrastructure.config;
 
 import com.erp.integrationhub.domain.port.IdentityValidatorPort;
 import com.erp.integrationhub.domain.port.PaymentGatewayPort;
+import com.erp.integrationhub.domain.port.PersonalIdentityValidatorPort;
 import com.erp.integrationhub.domain.port.TaxAuthorityEmitterPort;
 import com.erp.integrationhub.domain.port.VehicleValidatorPort;
 import com.erp.integrationhub.infrastructure.adapter.external.ApiSunatElectronicInvoicingAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.ChequeaPeRucValidationAdapter;
+import com.erp.integrationhub.infrastructure.adapter.external.FactilizaIdentityValidationAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.StripePaymentGatewayAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.SunarpVehicleValidationAdapter;
 import com.erp.integrationhub.infrastructure.adapter.simulated.SimulatedApiSunatAdapter;
 import com.erp.integrationhub.infrastructure.adapter.simulated.SimulatedChequeaPeAdapter;
+import com.erp.integrationhub.infrastructure.adapter.simulated.SimulatedFactilizaAdapter;
 import com.erp.integrationhub.infrastructure.adapter.simulated.SimulatedStripeAdapter;
 import com.erp.integrationhub.infrastructure.adapter.simulated.SimulatedSunarpAdapter;
 import org.slf4j.Logger;
@@ -95,6 +98,17 @@ public class ProviderAdapterRegistry {
             return new SimulatedSunarpAdapter();
         }
         return new SunarpVehicleValidationAdapter(baseUrl, token, false);
+    }
+
+    @Bean
+    public PersonalIdentityValidatorPort personalIdentityValidatorPort(
+            @Value("${erp.integration.factiliza.base-url:https://api.factiliza.com/pe/v1}") String baseUrl,
+            @Value("${erp.integration.factiliza.token:}") String token,
+            @Value("${erp.integration.factiliza.sandbox-mode:false}") boolean sandboxMode) {
+        if (simulatedMode || sandboxMode) {
+            return new SimulatedFactilizaAdapter();
+        }
+        return new FactilizaIdentityValidationAdapter(baseUrl, token);
     }
 
     // --- Backward compatibility bean aliases ---

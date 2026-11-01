@@ -91,6 +91,10 @@ public class ProviderAdapterRegistry {
         return new ChequeaPeRucValidationAdapter(baseUrl, token, false);
     }
 
+    public IdentityValidatorPort identityValidatorPort(String baseUrl, String token) {
+        return identityValidatorPort(baseUrl, token, false);
+    }
+
     @Bean
     public VehicleValidatorPort vehicleValidatorPort(
             @Value("${erp.integration.apiperu.base-url:https://apiperu.dev/api}") String baseUrl,
@@ -123,7 +127,7 @@ public class ProviderAdapterRegistry {
     }
 
     public IdentityValidatorPort validadorIdentidadPort(String baseUrl, String token) {
-        return identityValidatorPort(baseUrl, token);
+        return identityValidatorPort(baseUrl, token, false);
     }
 
     public VehicleValidatorPort validadorVehicularPort(String baseUrl, String token) {

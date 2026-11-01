@@ -2,8 +2,10 @@ package com.erp.integrationhub.interfaces.rest.controller;
 
 import com.erp.integrationhub.application.dto.command.QueryPlateCommand;
 import com.erp.integrationhub.application.dto.command.QueryRucCommand;
+import com.erp.integrationhub.application.dto.result.PersonalIdentityResult;
 import com.erp.integrationhub.application.dto.result.PlateResult;
 import com.erp.integrationhub.application.dto.result.RucResult;
+import com.erp.integrationhub.application.usecase.QueryPersonalIdentityUseCase;
 import com.erp.integrationhub.application.usecase.QueryPlateUseCase;
 import com.erp.integrationhub.application.usecase.QueryRucUseCase;
 import com.erp.integrationhub.infrastructure.security.TenantRateLimiter;
@@ -21,13 +23,16 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 import java.util.function.Supplier;
 
 /**
- * REST controller for external identity (SUNAT RUC) and vehicle registration (SUNARP plate) validations.
+ * REST controller for external identity (SUNAT RUC, Factiliza DNI/CE) and vehicle registration (SUNARP plate) validations.
  */
 @RestController
 @RequestMapping({"/api/v1/integrations/validate", "/api/v1/identity-validations"})
@@ -36,15 +41,25 @@ public class IdentityValidationController {
 
     private final QueryRucUseCase queryRucUseCase;
     private final QueryPlateUseCase queryPlateUseCase;
+    private final QueryPersonalIdentityUseCase queryPersonalIdentityUseCase;
     private final TenantRateLimiter rateLimiter;
 
     public IdentityValidationController(
             QueryRucUseCase queryRucUseCase,
             QueryPlateUseCase queryPlateUseCase,
+            QueryPersonalIdentityUseCase queryPersonalIdentityUseCase,
             TenantRateLimiter rateLimiter) {
         this.queryRucUseCase = queryRucUseCase;
         this.queryPlateUseCase = queryPlateUseCase;
+        this.queryPersonalIdentityUseCase = queryPersonalIdentityUseCase;
         this.rateLimiter = rateLimiter;
+    }
+
+    public IdentityValidationController(
+            QueryRucUseCase queryRucUseCase,
+            QueryPlateUseCase queryPlateUseCase,
+            TenantRateLimiter rateLimiter) {
+        this(queryRucUseCase, queryPlateUseCase, null, rateLimiter);
     }
 
     /**
@@ -109,41 +124,63 @@ public class IdentityValidationController {
     @GetMapping("/lookup")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'ADMIN_TALLER', 'SUPERADMIN', 'ASESOR', 'MECANICO', 'INTERNAL_SERVICE', 'ROLE_FLEET')")
     @Operation(summary = "Lookup Peruvian identity document (RUC, DNI, CE)")
-    public ResponseEntity<java.util.Map<String, Object>> lookup(
-            @org.springframework.web.bind.annotation.RequestParam(name = "type", required = false, defaultValue = "RUC") String type,
-            @org.springframework.web.bind.annotation.RequestParam(name = "number", required = false) String number,
-            @org.springframework.web.bind.annotation.RequestParam(name = "documentType", required = false) String docType,
-            @org.springframework.web.bind.annotation.RequestParam(name = "documentNumber", required = false) String docNumber
+    public ResponseEntity<Map<String, Object>> lookup(
+            @RequestParam(name = "type", required = false, defaultValue = "RUC") String type,
+            @RequestParam(name = "number", required = false) String number,
+            @RequestParam(name = "documentType", required = false) String docType,
+            @RequestParam(name = "documentNumber", required = false) String docNumber
     ) {
-        String resolvedType = docType != null ? docType : type;
-        String resolvedNumber = docNumber != null ? docNumber : (number != null ? number : "");
+        String resolvedType = (docType != null ? docType : type).toUpperCase().trim();
+        String resolvedNumber = (docNumber != null ? docNumber : (number != null ? number : "")).trim();
 
         if ("RUC".equalsIgnoreCase(resolvedType) && resolvedNumber.length() == 11) {
             try {
                 RucResult rucResult = queryRucUseCase.queryRuc(new QueryRucCommand(UUID.randomUUID(), resolvedNumber));
-                return ResponseEntity.ok(java.util.Map.of(
-                        "type", "RUC",
-                        "documentNumber", rucResult.ruc(),
-                        "businessName", rucResult.legalName(),
-                        "tradeName", rucResult.legalName(),
-                        "address", rucResult.fiscalAddress() != null ? rucResult.fiscalAddress() : "",
-                        "condition", rucResult.condition() != null ? rucResult.condition() : "HABIDO",
-                        "status", rucResult.status() != null ? rucResult.status() : "ACTIVO",
-                        "verified", true,
-                        "source", "SUNAT"
-                ));
+                if (rucResult != null && rucResult.valid()) {
+                    Map<String, Object> response = new LinkedHashMap<>();
+                    response.put("type", "RUC");
+                    response.put("documentNumber", rucResult.ruc());
+                    response.put("businessName", rucResult.legalName() != null ? rucResult.legalName() : "");
+                    response.put("tradeName", rucResult.legalName() != null ? rucResult.legalName() : "");
+                    response.put("address", rucResult.fiscalAddress() != null ? rucResult.fiscalAddress() : "");
+                    response.put("condition", rucResult.condition() != null ? rucResult.condition() : "HABIDO");
+                    response.put("status", rucResult.status() != null ? rucResult.status() : "ACTIVO");
+                    response.put("verified", true);
+                    response.put("source", "SUNAT");
+                    return ResponseEntity.ok(response);
+                }
             } catch (Exception ignored) {}
         }
 
-        return ResponseEntity.ok(java.util.Map.of(
-                "type", resolvedType.toUpperCase(),
-                "documentNumber", resolvedNumber,
-                "firstName", "Cliente",
-                "lastName", "General",
-                "fullName", "Cliente General",
-                "verified", true,
-                "source", "RENIEC".equalsIgnoreCase(resolvedType) ? "RENIEC" : "SUNAT"
-        ));
+        if (queryPersonalIdentityUseCase != null &&
+                ("DNI".equalsIgnoreCase(resolvedType) || "CE".equalsIgnoreCase(resolvedType) || "CEE".equalsIgnoreCase(resolvedType) || "CARNET_EXTRANJERIA".equalsIgnoreCase(resolvedType))) {
+            try {
+                PersonalIdentityResult identity = queryPersonalIdentityUseCase.queryPersonalIdentity(UUID.randomUUID(), resolvedType, resolvedNumber);
+                if (identity != null && identity.valid()) {
+                    Map<String, Object> response = new LinkedHashMap<>();
+                    response.put("type", resolvedType);
+                    response.put("documentNumber", identity.documentNumber());
+                    response.put("firstName", identity.firstName() != null ? identity.firstName() : "");
+                    response.put("lastName", identity.firstSurname() != null ? identity.firstSurname() : "");
+                    response.put("firstSurname", identity.firstSurname() != null ? identity.firstSurname() : "");
+                    response.put("secondSurname", identity.secondSurname() != null ? identity.secondSurname() : "");
+                    response.put("fullName", identity.fullName() != null ? identity.fullName() : "");
+                    response.put("verified", true);
+                    response.put("source", ("CE".equalsIgnoreCase(resolvedType) || "CEE".equalsIgnoreCase(resolvedType)) ? "MIGRACIONES" : "RENIEC");
+                    return ResponseEntity.ok(response);
+                }
+            } catch (Exception ignored) {}
+        }
+
+        Map<String, Object> fallback = new LinkedHashMap<>();
+        fallback.put("type", resolvedType);
+        fallback.put("documentNumber", resolvedNumber);
+        fallback.put("firstName", "Cliente");
+        fallback.put("lastName", "General");
+        fallback.put("fullName", "Cliente General");
+        fallback.put("verified", false);
+        fallback.put("source", "RENIEC".equalsIgnoreCase(resolvedType) ? "RENIEC" : "SUNAT");
+        return ResponseEntity.ok(fallback);
     }
 
     private <T> T withTenantContext(UUID tenantId, Supplier<T> operation) {

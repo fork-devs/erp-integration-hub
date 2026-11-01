@@ -2,17 +2,21 @@ package com.erp.integrationhub.application.service;
 
 import com.erp.integrationhub.application.dto.command.QueryPlateCommand;
 import com.erp.integrationhub.application.dto.command.QueryRucCommand;
+import com.erp.integrationhub.application.dto.result.PersonalIdentityResult;
 import com.erp.integrationhub.application.dto.result.PlateResult;
 import com.erp.integrationhub.application.dto.result.RucResult;
+import com.erp.integrationhub.application.usecase.QueryPersonalIdentityUseCase;
 import com.erp.integrationhub.application.usecase.QueryPlateUseCase;
 import com.erp.integrationhub.application.usecase.QueryRucUseCase;
 import com.erp.integrationhub.domain.model.IntegrationAttempt;
 import com.erp.integrationhub.domain.model.ProviderType;
+import com.erp.integrationhub.domain.model.QueryPersonalIdentityResult;
 import com.erp.integrationhub.domain.model.QueryPlateResult;
 import com.erp.integrationhub.domain.model.QueryRucResult;
 import com.erp.integrationhub.domain.port.IdentityCachePort;
 import com.erp.integrationhub.domain.port.IdentityValidatorPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
+import com.erp.integrationhub.domain.port.PersonalIdentityValidatorPort;
 import com.erp.integrationhub.domain.port.UnitOfWork;
 import com.erp.integrationhub.domain.port.VehicleValidatorPort;
 import org.slf4j.Logger;
@@ -23,14 +27,15 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Application service for taxpayer (RUC) and vehicle plate identity validation.
+ * Application service for taxpayer (RUC), personal identity (DNI/CE), and vehicle plate validation.
  */
-public class IdentityValidationService implements QueryRucUseCase, QueryPlateUseCase {
+public class IdentityValidationService implements QueryRucUseCase, QueryPlateUseCase, QueryPersonalIdentityUseCase {
 
     private static final Logger log = LoggerFactory.getLogger(IdentityValidationService.class);
 
     private final IdentityValidatorPort identityValidatorPort;
     private final VehicleValidatorPort vehicleValidatorPort;
+    private final PersonalIdentityValidatorPort personalIdentityValidatorPort;
     private final IdentityCachePort identityCachePort;
     private final IntegrationAttemptRepositoryPort attemptRepositoryPort;
     private final UnitOfWork unitOfWork;
@@ -38,14 +43,25 @@ public class IdentityValidationService implements QueryRucUseCase, QueryPlateUse
     public IdentityValidationService(
             IdentityValidatorPort identityValidatorPort,
             VehicleValidatorPort vehicleValidatorPort,
+            PersonalIdentityValidatorPort personalIdentityValidatorPort,
             IdentityCachePort identityCachePort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             UnitOfWork unitOfWork) {
         this.identityValidatorPort = identityValidatorPort;
         this.vehicleValidatorPort = vehicleValidatorPort;
+        this.personalIdentityValidatorPort = personalIdentityValidatorPort;
         this.identityCachePort = identityCachePort;
         this.attemptRepositoryPort = attemptRepositoryPort;
         this.unitOfWork = unitOfWork;
+    }
+
+    public IdentityValidationService(
+            IdentityValidatorPort identityValidatorPort,
+            VehicleValidatorPort vehicleValidatorPort,
+            IdentityCachePort identityCachePort,
+            IntegrationAttemptRepositoryPort attemptRepositoryPort,
+            UnitOfWork unitOfWork) {
+        this(identityValidatorPort, vehicleValidatorPort, null, identityCachePort, attemptRepositoryPort, unitOfWork);
     }
 
     @Override
@@ -136,6 +152,37 @@ public class IdentityValidationService implements QueryRucUseCase, QueryPlateUse
                 r.valid(),
                 fromCache
         );
+    }
+
+    @Override
+    public PersonalIdentityResult queryPersonalIdentity(UUID tenantId, String documentType, String documentNumber) {
+        if (documentNumber == null || documentNumber.trim().isEmpty()) {
+            throw new IllegalArgumentException("Document number is required");
+        }
+
+        String type = documentType != null ? documentType.trim().toUpperCase() : "DNI";
+        String number = documentNumber.trim();
+
+        if (personalIdentityValidatorPort == null) {
+            log.warn("PersonalIdentityValidatorPort is not configured, returning unverified identity for {} {}", type, number);
+            return PersonalIdentityResult.fromDomain(QueryPersonalIdentityResult.invalid(type, number), false);
+        }
+
+        QueryPersonalIdentityResult result;
+        try {
+            if ("CE".equalsIgnoreCase(type) || "CEE".equalsIgnoreCase(type) || "CARNET_EXTRANJERIA".equalsIgnoreCase(type)) {
+                result = personalIdentityValidatorPort.queryCee(number);
+            } else {
+                result = personalIdentityValidatorPort.queryDni(number);
+            }
+            logAttempt(tenantId, ProviderType.FACTILIZA, "VALIDATE_" + type, number, null);
+        } catch (Exception e) {
+            log.warn("Failed to validate {} {} with external provider: {}", type, number, e.getMessage());
+            result = QueryPersonalIdentityResult.invalid(type, number);
+            logAttempt(tenantId, ProviderType.FACTILIZA, "VALIDATE_" + type, number, e.getMessage());
+        }
+
+        return PersonalIdentityResult.fromDomain(result, false);
     }
 
     private PlateResult toPlateResult(QueryPlateResult p, boolean fromCache) {

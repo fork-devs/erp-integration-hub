@@ -8,5 +8,7 @@ public enum ProviderType {
     /** Padron fiscal de RUC (Chequea.pe). */
     CHEQUEA,
     /** Padron vehicular (SUNARP). */
-    SUNARP
+    SUNARP,
+    /** Identidad personal DNI / CE (Factiliza / RENIEC / Migraciones). */
+    FACTILIZA
 }

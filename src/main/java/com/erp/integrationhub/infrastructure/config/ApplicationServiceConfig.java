@@ -128,10 +128,17 @@ public class ApplicationServiceConfig {
     public IdentityValidationService identityValidationService(
             IdentityValidatorPort identityValidatorPort,
             VehicleValidatorPort vehicleValidatorPort,
+            com.erp.integrationhub.domain.port.PersonalIdentityValidatorPort personalIdentityValidatorPort,
             IdentityCachePort identityCachePort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             UnitOfWork unitOfWork) {
-        return new IdentityValidationService(identityValidatorPort, vehicleValidatorPort, identityCachePort, attemptRepositoryPort, unitOfWork);
+        return new IdentityValidationService(
+                identityValidatorPort,
+                vehicleValidatorPort,
+                personalIdentityValidatorPort,
+                identityCachePort,
+                attemptRepositoryPort,
+                unitOfWork);
     }
 
     @Bean

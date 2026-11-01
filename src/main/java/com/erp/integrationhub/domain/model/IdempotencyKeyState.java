@@ -3,46 +3,46 @@ package com.erp.integrationhub.domain.model;
 import java.io.Serializable;
 
 /**
- * Estado de una clave de idempotencia.
+ * Lifecycle state of an idempotency key.
  *
- * <p>Sin estado, un fallo transitorio dejaba la clave con la respuesta del
- * fallo, y la siguiente peticion con la misma clave recibia ese fallo como
- * resultado definitivo: la operacion se perdia, y el usuario no tenia forma
- * de reintentarla.
+ * <p>Prevents duplicate execution when concurrent requests arrive and releases keys
+ * on transient failures so subsequent retries can proceed safely.
  */
 public enum IdempotencyKeyState implements Serializable {
 
     /**
-     * La operacion se esta ejecutando. La clave esta RECLAMADA: si otra
-     * peticion llega con la misma clave, no debe contactar al proveedor otra
-     * vez.
+     * Operation is currently being executed. The key is CLAIMED: concurrent requests
+     * with the same key must not contact the downstream provider again.
      */
     IN_PROGRESS,
 
     /**
-     * La operacion termino con exito, y el resultado almacenado es
-     * definitivo.
+     * Operation completed successfully; the stored response payload is definitive.
      */
     COMPLETED,
 
     /**
-     * La operacion fallo de forma transitoria. La clave se libera para que
-     * un reintento pueda volver a intentarlo, y el resultado almacenado NO
-     * es definitivo.
+     * Operation encountered a transient failure. The key is released so a retry
+     * can re-attempt downstream execution.
      */
     RELEASED,
 
     /**
-     * La operacion fallo de forma definitiva. El resultado almacenado es
-     * definitivo, y una peticion con la misma clave recibira ese rechazo.
+     * Operation failed definitively. The stored rejection response is final.
      */
     REJECTED;
 
     /**
-     * Indica si el resultado almacenado es definitivo, es decir, si una
-     * peticion con la misma clave debe devolverlo tal cual.
+     * Indicates whether the stored outcome is final and definitive.
+     *
+     * @return true if the state is COMPLETED or REJECTED
      */
-    public boolean resultadoDefinitivo() {
+    public boolean isDefinitiveResult() {
         return this == COMPLETED || this == REJECTED;
+    }
+
+    /** Backward compatibility accessor for isDefinitiveResult. */
+    public boolean resultadoDefinitivo() {
+        return isDefinitiveResult();
     }
 }

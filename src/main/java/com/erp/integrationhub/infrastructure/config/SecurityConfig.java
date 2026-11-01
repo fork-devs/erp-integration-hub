@@ -21,7 +21,7 @@ public class SecurityConfig {
     @Value("${erp.security.internal-service-key:}")
     private String internalServiceKey;
 
-    @Value("${erp.security.internal-service.shared-key-enabled:false}")
+    @Value("${erp.security.internal-service.shared-key-enabled:${erp.security.shared-key-enabled:true}}")
     private boolean claveCompartidaHabilitada;
 
     /**
@@ -54,6 +54,8 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 // Public Documentation and Health checks
                 .requestMatchers(
+                    "/",
+                    "/health",
                     "/actuator/**",
                     "/swagger-ui/**",
                     "/swagger-ui.html",

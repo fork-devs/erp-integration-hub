@@ -1,7 +1,10 @@
 package com.erp.integrationhub.infrastructure.adapter.external;
 
-import com.erp.integrationhub.domain.model.ConsultaRucResult;
-import com.erp.integrationhub.domain.port.ValidadorIdentidadPort;
+import com.erp.integrationhub.domain.exception.ProviderUnavailableException;
+import com.erp.integrationhub.domain.model.QueryRucResult;
+import com.erp.integrationhub.domain.port.IdentityValidatorPort;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -11,94 +14,192 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 
-public class ChequeaPeRucValidationAdapter implements ValidadorIdentidadPort {
+/**
+ * External adapter for querying Peruvian taxpayer (RUC) data via Chequea.pe.
+ */
+public class ChequeaPeRucValidationAdapter implements IdentityValidatorPort {
 
     private static final Logger log = LoggerFactory.getLogger(ChequeaPeRucValidationAdapter.class);
 
     private final String baseUrl;
     private final String token;
-    private final boolean sandboxMode;
     private final HttpClient httpClient;
+    private final ObjectMapper objectMapper;
 
     public ChequeaPeRucValidationAdapter(String baseUrl, String token, boolean sandboxMode) {
-        this.baseUrl = (baseUrl != null && !baseUrl.isBlank()) ? baseUrl.trim() : "https://api.chequea.pe/v1";
-        this.token = token != null ? token.trim() : "";
-        this.sandboxMode = sandboxMode;
-        this.httpClient = HttpClient.newBuilder()
+        this(baseUrl, token, HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_2)
                 .connectTimeout(Duration.ofSeconds(6))
-                .build();
+                .build(), new ObjectMapper());
+    }
+
+    public ChequeaPeRucValidationAdapter(String baseUrl, String token, HttpClient httpClient, ObjectMapper objectMapper) {
+        this.baseUrl = (baseUrl != null && !baseUrl.isBlank()) ? baseUrl.trim() : "https://api.chequea.pe/v1";
+        this.token = token != null ? token.trim() : "";
+        this.httpClient = httpClient;
+        this.objectMapper = objectMapper != null ? objectMapper : new ObjectMapper();
     }
 
     @Override
-    public ConsultaRucResult consultarRuc(String ruc) {
-        log.info("[CHEQUEA.PE ACL] Consultando padrón fiscal SUNAT para RUC: {}", ruc);
+    public QueryRucResult queryRuc(String ruc) {
+        log.info("[CHEQUEA.PE ACL] Querying SUNAT fiscal registry for RUC: {}", ruc);
 
         if (ruc == null || !ruc.matches("^(10|20|15|17)\\d{9}$")) {
-            return ConsultaRucResult.invalido(ruc);
+            return QueryRucResult.invalid(ruc);
         }
 
-        // Modo sandbox si la credencial es de prueba o mock
-        // Llamada HTTP Real al API de Chequea.pe
         try {
-            String targetUrl = baseUrl.endsWith("/") ? baseUrl + "ruc/" + ruc : baseUrl + "/ruc/" + ruc;
-            
-            HttpRequest request = HttpRequest.newBuilder()
+            String cleanBase = baseUrl.replaceAll("/+$", "");
+            boolean isChequeaLive = cleanBase.contains("chequea.pe");
+            String targetUrl = isChequeaLive
+                    ? (cleanBase.endsWith("/v1") ? cleanBase.replaceFirst("/v1$", "/api/v1/ruc/batch") : cleanBase + "/ruc/batch")
+                    : (cleanBase + "/ruc/" + ruc);
+
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(targetUrl))
                     .timeout(Duration.ofSeconds(10))
-                    .header("Accept", "application/json")
-                    .header("Authorization", "Bearer " + token)
-                    .header("x-api-key", token)
-                    .GET()
-                    .build();
+                    .header("Accept", "application/json");
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            log.info("[CHEQUEA.PE ACL] Respuesta HTTP {}: {}", response.statusCode(), response.body());
-
-            if (response.statusCode() == 200) {
-                String body = response.body();
-                String razonSocial = extractJsonField(body, "razon_social", "nombre_o_razon_social", "razonSocial", "nombre");
-                String estado = extractJsonField(body, "estado", "estado_contribuyente");
-                String condicion = extractJsonField(body, "condicion", "condicion_domicilio");
-                String direccion = extractJsonField(body, "direccion", "direccion_fiscal", "direccion_completa", "domicilioFiscal");
-                String departamento = extractJsonField(body, "departamento");
-                String provincia = extractJsonField(body, "provincia");
-                String distrito = extractJsonField(body, "distrito");
-                String ubigeo = extractJsonField(body, "ubigeo", "ubigeo_sunat");
-
-                if (razonSocial != null && !razonSocial.isBlank()) {
-                    return new ConsultaRucResult(
-                            ruc,
-                            razonSocial,
-                            estado != null ? estado : "ACTIVO",
-                            condicion != null ? condicion : "HABIDO",
-                            direccion != null ? direccion : "LIMA",
-                            departamento != null ? departamento : "LIMA",
-                            provincia != null ? provincia : "LIMA",
-                            distrito != null ? distrito : "LIMA",
-                            ubigeo != null ? ubigeo : "150101",
-                            true
-                    );
-                }
+            if (isChequeaLive) {
+                requestBuilder.header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString("{\"rucs\":[\"" + ruc + "\"]}"));
+            } else {
+                requestBuilder.GET();
             }
 
-            return ConsultaRucResult.invalido(ruc);
+            if (!token.isBlank()) {
+                requestBuilder.header("Authorization", "Bearer " + token);
+                requestBuilder.header("x-api-key", token);
+            }
 
+            HttpResponse<String> response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            log.info("[CHEQUEA.PE ACL] Upstream HTTP response status: {}", response.statusCode());
+
+            int statusCode = response.statusCode();
+
+            if (statusCode == 200) {
+                return parseSuccessfulResponse(ruc, response.body());
+            }
+
+            if (statusCode == 404) {
+                log.info("[CHEQUEA.PE ACL] RUC {} not found in fiscal registry (HTTP 404)", ruc);
+                return QueryRucResult.invalid(ruc);
+            }
+
+            if (statusCode == 429) {
+                log.error("[CHEQUEA.PE ACL] Rate limit exceeded querying Chequea.pe for RUC {}", ruc);
+                throw new ProviderUnavailableException("Chequea.pe rate limit exceeded (HTTP 429)");
+            }
+
+            if (statusCode >= 500) {
+                log.error("[CHEQUEA.PE ACL] Upstream server error {} from Chequea.pe for RUC {}", statusCode, ruc);
+                throw new ProviderUnavailableException("Chequea.pe server error (HTTP " + statusCode + ")");
+            }
+
+            log.error("[CHEQUEA.PE ACL] Unexpected HTTP status {} from Chequea.pe for RUC {}", statusCode, ruc);
+            throw new ProviderUnavailableException("Chequea.pe returned unexpected status: " + statusCode);
+
+        } catch (ProviderUnavailableException e) {
+            throw e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("[CHEQUEA.PE ACL] Thread interrupted while querying Chequea.pe for RUC {}: {}", ruc, e.getMessage());
+            throw new ProviderUnavailableException("Interrupted querying Chequea.pe: " + e.getMessage());
         } catch (Exception e) {
-            log.error("[CHEQUEA.PE ACL] Error al consultar API de Chequea.pe para RUC {}: {}", ruc, e.getMessage());
-            return ConsultaRucResult.invalido(ruc);
+            log.error("[CHEQUEA.PE ACL] Network or communication failure querying Chequea.pe for RUC {}: {}", ruc, e.getMessage());
+            throw new ProviderUnavailableException("Communication failure with Chequea.pe: " + e.getMessage());
         }
     }
 
-    private String extractJsonField(String json, String... possibleKeys) {
-        if (json == null) return null;
+    private QueryRucResult parseSuccessfulResponse(String ruc, String body) {
+        if (body == null || body.isBlank()) {
+            return QueryRucResult.invalid(ruc);
+        }
+
+        try {
+            JsonNode root = objectMapper.readTree(body);
+
+            // Handle possible error response inside HTTP 200 (e.g. {"success": false, "message": "..."})
+            if (root.has("success") && !root.get("success").asBoolean(true)) {
+                log.warn("[CHEQUEA.PE ACL] Upstream indicated failure for RUC {}: {}", ruc,
+                        extractNodeField(root, "message", "error"));
+                return QueryRucResult.invalid(ruc);
+            }
+
+            JsonNode targetNode = root;
+
+            if (root.has("results") && root.get("results").isArray()) {
+                boolean found = false;
+                for (JsonNode res : root.get("results")) {
+                    if (ruc.equals(res.path("ruc").asText())) {
+                        if (!"ok".equalsIgnoreCase(res.path("status").asText())) {
+                            log.info("[CHEQUEA.PE ACL] RUC {} not found in batch results", ruc);
+                            return QueryRucResult.invalid(ruc);
+                        }
+                        if (res.hasNonNull("data")) {
+                            targetNode = res.get("data");
+                            found = true;
+                        }
+                        break;
+                    }
+                }
+                if (!found && targetNode == root) {
+                    return QueryRucResult.invalid(ruc);
+                }
+            } else if (root.hasNonNull("data")) {
+                targetNode = root.get("data");
+            }
+
+            String legalName = extractField(targetNode, root, "razon_social", "nombre_o_razon_social", "razonSocial", "nombre");
+
+            if (legalName != null && !legalName.isBlank()) {
+                String status = extractField(targetNode, root, "estado", "estado_contribuyente", "status");
+                String condition = extractField(targetNode, root, "condicion", "condicion_domicilio", "condition");
+                String address = extractField(targetNode, root, "direccion", "direccion_fiscal", "direccion_completa", "domicilioFiscal", "fiscalAddress");
+                String department = extractField(targetNode, root, "departamento", "department");
+                String province = extractField(targetNode, root, "provincia", "province");
+                String district = extractField(targetNode, root, "distrito", "district");
+                String ubigeo = extractField(targetNode, root, "ubigeo", "ubigeo_sunat");
+
+                return new QueryRucResult(
+                        ruc,
+                        legalName,
+                        status != null ? status : "ACTIVO",
+                        condition != null ? condition : "HABIDO",
+                        address,
+                        department,
+                        province,
+                        district,
+                        ubigeo,
+                        true
+                );
+            }
+
+            return QueryRucResult.invalid(ruc);
+        } catch (Exception e) {
+            log.error("[CHEQUEA.PE ACL] Error parsing JSON response for RUC {}: {}", ruc, e.getMessage());
+            return QueryRucResult.invalid(ruc);
+        }
+    }
+
+    private String extractField(JsonNode node, JsonNode fallbackRoot, String... possibleKeys) {
+        String val = extractNodeField(node, possibleKeys);
+        if (val == null && fallbackRoot != null && fallbackRoot != node) {
+            val = extractNodeField(fallbackRoot, possibleKeys);
+        }
+        return val;
+    }
+
+    private String extractNodeField(JsonNode node, String... possibleKeys) {
+        if (node == null || !node.isObject()) {
+            return null;
+        }
         for (String key : possibleKeys) {
-            String pattern = "\"" + key + "\":\"";
-            int start = json.indexOf(pattern);
-            if (start != -1) {
-                start += pattern.length();
-                int end = json.indexOf("\"", start);
-                if (end != -1) return json.substring(start, end);
+            if (node.hasNonNull(key)) {
+                String text = node.get(key).asText();
+                if (text != null && !text.isBlank() && !"null".equalsIgnoreCase(text)) {
+                    return text.trim();
+                }
             }
         }
         return null;

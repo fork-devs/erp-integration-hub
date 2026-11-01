@@ -1,24 +1,29 @@
 package com.erp.integrationhub.support;
 
 import com.erp.integrationhub.application.service.RetrySchedulerService;
+import com.erp.integrationhub.domain.model.DeclarationResult;
+import com.erp.integrationhub.domain.model.IdempotencyScope;
 import com.erp.integrationhub.domain.model.ProviderType;
 import com.erp.integrationhub.domain.model.RetryTask;
-import com.erp.integrationhub.domain.port.EmisorTributarioPort;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
-import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
+import com.erp.integrationhub.domain.port.PaymentGatewayPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
+import com.erp.integrationhub.domain.port.TaxAuthorityEmitterPort;
 import com.erp.integrationhub.domain.port.UnitOfWork;
 import com.erp.integrationhub.infrastructure.persistence.entity.IdempotencyKeyJpaEntity;
 import com.erp.integrationhub.infrastructure.persistence.repository.SpringDataIdempotencyRepository;
 import com.erp.integrationhub.infrastructure.persistence.rls.TenantContextHolder;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -28,19 +33,12 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
 /**
- * Un reintento que ya fue aceptado por el proveedor no se reenvia.
- *
- * <p>Si el proveedor emito el comprobante y el registro local falla, la
- * tarea no puede volver a la cola de pendientes: reenviarla emitiria un
- * comprobante duplicado, que es un problema mucho mayor que un registro
- * local que falta.
- *
- * <p>Ver docs/doc-estado-implementacion.md, hallazgo P0 5.3.
+ * Tests ensuring that a retry already accepted by downstream provider is never re-transmitted.
  */
 class VoucherRetryAtomicityTest extends AbstractPostgresIntegrationTest {
 
-    private static final UUID TALLER = UUID.fromString("dddd4444-5555-6666-7777-888899990000");
-    private static final UUID COMPROBANTE = UUID.fromString("eeee5555-6666-7777-8888-999900001111");
+    private static final UUID TENANT_ID = UUID.fromString("dddd4444-5555-6666-7777-888899990000");
+    private static final UUID INVOICE_ID = UUID.fromString("eeee5555-6666-7777-8888-999900001111");
 
     @Autowired
     private RetrySchedulerService retrySchedulerService;
@@ -58,30 +56,22 @@ class VoucherRetryAtomicityTest extends AbstractPostgresIntegrationTest {
     private UnitOfWork unitOfWork;
 
     @Autowired
-    private EmisorTributarioPort emisorTributarioPort;
+    private TaxAuthorityEmitterPort taxAuthorityEmitterPort;
 
     @Autowired
-    private PasarelaDePagoPort pasarelaDePagoPort;
+    private PaymentGatewayPort paymentGatewayPort;
 
     @MockitoSpyBean
     private SpringDataIdempotencyRepository springDataIdempotencyRepository;
 
-    /**
-     * El emisor tributario real llama a la API de SUNAT. En el test se
-     * sustituye por uno que responde con exito: lo que se verifica es el
-     * comportamiento del sistema ante un resultado ACCEPTED, no la
-     * comunicacion con el proveedor.
-     */
     @MockitoBean
-    private EmisorTributarioPort emisorTributarioPortStub;
+    private TaxAuthorityEmitterPort taxAuthorityEmitterPortStub;
 
     @BeforeEach
     void setUp() {
-        // El contexto de taller es por hilo: cada test establece el suyo, o
-        // hereda el de otro y escribe en el taller equivocado.
-        TenantContextHolder.setTenantId(TALLER);
-        when(emisorTributarioPortStub.emitirComprobante(any()))
-                .thenReturn(com.erp.integrationhub.domain.model.ResultadoDeclaracion.aceptado(
+        TenantContextHolder.setTenantId(TENANT_ID);
+        when(taxAuthorityEmitterPortStub.emitInvoice(any()))
+                .thenReturn(DeclarationResult.accepted(
                         "0", "La factura numero F001-1, ha sido aceptada", null, null, null, null));
     }
 
@@ -91,43 +81,43 @@ class VoucherRetryAtomicityTest extends AbstractPostgresIntegrationTest {
     }
 
     @Test
-    void unFalloAlEscribirLaIdempotenciaNoReprogramaElComprobante() {
-        RetryTask tarea = tareaPendiente();
+    @DisplayName("Failure while persisting idempotency does not reschedule already-emitted invoice")
+    void failureWritingIdempotencyDoesNotRescheduleInvoice() {
+        RetryTask task = createPendingTask();
 
-        doThrow(new RuntimeException("no se puede escribir la idempotencia"))
+        doThrow(new RuntimeException("cannot write idempotency"))
                 .when(springDataIdempotencyRepository).save(any(IdempotencyKeyJpaEntity.class));
 
         retrySchedulerService.processPendingRetries(10);
 
-        RetryTask despues = retryQueueRepositoryPort.findById(tarea.getId()).orElseThrow();
-        assertNotEquals("PENDING", despues.getStatus(),
-                "La tarea no debe volver a la cola de pendientes: el comprobante ya fue emitido");
-        assertEquals("COMPLETED", despues.getStatus(),
-                "El comprobante ya fue emitido por el proveedor: la tarea no puede reprogramarse para "
-                        + "reenviarlo, porque eso.emitiria un comprobante duplicado. Un fallo de la cache "
-                        + "de idempotencia no cambia el resultado de la emision.");
+        RetryTask after = retryQueueRepositoryPort.findById(task.getId()).orElseThrow();
+        assertNotEquals("PENDING", after.getStatus(),
+                "Task must not return to pending queue when invoice has already been emitted");
+        assertEquals("COMPLETED", after.getStatus(),
+                "Invoice was accepted by provider: task must complete and not re-emit duplicate invoice");
         assertEquals(0, idempotencyRepositoryPort
-                .findByTenantAndScopeAndKey(TALLER,
-                        com.erp.integrationhub.domain.model.IdempotencyScope.VOUCHER,
-                        COMPROBANTE.toString())
-                .map(java.util.List::of)
-                .orElse(java.util.List.of())
+                .findByTenantAndScopeAndKey(TENANT_ID,
+                        IdempotencyScope.VOUCHER,
+                        INVOICE_ID.toString())
+                .map(List::of)
+                .orElse(List.of())
                 .size(),
-                "El registro de idempotencia no pudo escribirse, y eso es lo que se verifica");
+                "Idempotency record failed persistence as simulated by spy");
     }
 
     @Test
-    void sinFalloLaTareaQuedaCompletada() {
-        RetryTask tarea = tareaPendiente();
+    @DisplayName("Without failure, task completes successfully")
+    void withoutFailureTaskCompletes() {
+        RetryTask task = createPendingTask();
 
         retrySchedulerService.processPendingRetries(10);
 
-        RetryTask despues = retryQueueRepositoryPort.findById(tarea.getId()).orElseThrow();
-        assertEquals("COMPLETED", despues.getStatus(),
-                "Con un resultado exitoso del proveedor, la tarea debe quedar completada");
+        RetryTask after = retryQueueRepositoryPort.findById(task.getId()).orElseThrow();
+        assertEquals("COMPLETED", after.getStatus(),
+                "Task should be marked completed on successful provider response");
     }
 
-    private RetryTask tareaPendiente() {
+    private RetryTask createPendingTask() {
         String payload = """
                 {
                   "tenantId": "%s",
@@ -158,27 +148,25 @@ class VoucherRetryAtomicityTest extends AbstractPostgresIntegrationTest {
                   "fechaEmision": "2026-01-15",
                   "idempotencyKey": "%s"
                 }
-                """.formatted(TALLER, COMPROBANTE, COMPROBANTE);
+                """.formatted(TENANT_ID, INVOICE_ID, INVOICE_ID);
 
-        // La tarea se crea con la proxima ejecucion ya vencida: el planificador
-        // solo recoge las tareas cuya hora de reintento ha pasado.
-        java.time.Instant ahora = java.time.Instant.now();
-        RetryTask tarea = new RetryTask(
+        Instant now = Instant.now();
+        RetryTask task = new RetryTask(
                 UUID.randomUUID(),
-                TALLER,
+                TENANT_ID,
                 ProviderType.APISUNAT,
                 "EMIT_VOUCHER",
-                COMPROBANTE,
+                INVOICE_ID,
                 payload,
                 0,
                 5,
-                ahora.minusSeconds(60),
+                now.minusSeconds(60),
                 "PENDING",
                 null,
-                ahora,
-                ahora);
+                now,
+                now);
 
-        unitOfWork.runInTransaction(() -> retryQueueRepositoryPort.save(tarea));
-        return tarea;
+        unitOfWork.runInTransaction(() -> retryQueueRepositoryPort.save(task));
+        return task;
     }
 }

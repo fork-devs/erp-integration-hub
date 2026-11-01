@@ -1,10 +1,10 @@
 package com.erp.integrationhub.interfaces.rest.controller;
 
-import com.erp.integrationhub.application.dto.command.ProcesarPagoCommand;
-import com.erp.integrationhub.application.dto.result.PagoResult;
-import com.erp.integrationhub.application.usecase.ProcesarPagoUseCase;
-import com.erp.integrationhub.interfaces.rest.request.ProcesarPagoRequest;
-import com.erp.integrationhub.interfaces.rest.response.PagoResponse;
+import com.erp.integrationhub.application.dto.command.ProcessPaymentCommand;
+import com.erp.integrationhub.application.dto.result.PaymentResult;
+import com.erp.integrationhub.application.usecase.ProcessPaymentUseCase;
+import com.erp.integrationhub.interfaces.rest.request.ProcessPaymentRequest;
+import com.erp.integrationhub.interfaces.rest.response.PaymentResponse;
 import com.erp.integrationhub.interfaces.rest.support.AuthenticatedUserHolder;
 import com.erp.integrationhub.interfaces.rest.support.TenantContextScope;
 import com.erp.integrationhub.interfaces.rest.support.TenantResolver;
@@ -23,44 +23,43 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import java.util.function.Supplier;
 
+/**
+ * REST controller for processing payment gateway transactions (Stripe).
+ */
 @RestController
 @RequestMapping("/api/v1/integrations/payments")
 @Tag(name = "Payment Gateway (Stripe)", description = "Endpoints for processing card payments with idempotency guarantee")
 public class PaymentIntegrationController {
 
-    private final ProcesarPagoUseCase procesarPagoUseCase;
+    private final ProcessPaymentUseCase processPaymentUseCase;
 
-    public PaymentIntegrationController(ProcesarPagoUseCase procesarPagoUseCase) {
-        this.procesarPagoUseCase = procesarPagoUseCase;
+    public PaymentIntegrationController(ProcessPaymentUseCase processPaymentUseCase) {
+        this.processPaymentUseCase = processPaymentUseCase;
     }
 
-    @PostMapping("/charge")
     /**
-     * Un cobro mueve dinero: solo lo ejecutan los roles de administracion y
-     * los servicios internos. Antes, el endpoint exigia autenticacion, y eso
-     * bastaba para que cualquier principalAuthenticated lo ejecutara.
+     * Processes a credit or debit card charge through Stripe with mandatory client idempotency key.
+     *
+     * @param requestedTenantId optional workshop tenant ID header
+     * @param idempotencyHeader mandatory client idempotency key header
+     * @param request payment details (amount, currency, card token, description)
+     * @return payment outcome details
      */
+    @PostMapping("/charge")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'ADMIN_TALLER', 'SUPERADMIN', 'INTERNAL_SERVICE')")
     @Operation(summary = "Process a credit/debit card payment via Stripe", description = "Executes charge with Stripe token and deterministic idempotency lock")
-    public ResponseEntity<PagoResponse> processCharge(
+    public ResponseEntity<PaymentResponse> processCharge(
             @RequestHeader(value = "X-Tenant-ID", required = false) UUID requestedTenantId,
             @RequestHeader(value = "Idempotency-Key") String idempotencyHeader,
-            @Valid @RequestBody ProcesarPagoRequest request) {
+            @Valid @RequestBody ProcessPaymentRequest request) {
 
         UUID tenantId = TenantResolver.resolveForOperation(requestedTenantId, AuthenticatedUserHolder.current());
 
-        // La clave de idempotencia es OBLIGATORIA, y la aporta el cliente.
-        //
-        // Antes se derivaba de los datos del cobro. Con la derivacion, la
-        // clave era la misma para dos cobros identicos del mismo cliente, de
-        // modo que el segundo se tomato por una repeticion del primero y NO
-        // se cobraba: el cliente pagaba una vez por dos servicios. La clave
-        // tiene que distinguir una peticion de otra, y solo el cliente puede
-        // hacerlo.
         if (idempotencyHeader == null || idempotencyHeader.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "La cabecera Idempotency-Key es obligatoria para procesar un cobro");
+                    "Idempotency-Key header is mandatory for processing payments");
         }
         String effectiveIdempotencyKey = idempotencyHeader.trim();
 
@@ -68,30 +67,27 @@ public class PaymentIntegrationController {
                 ? request.paymentId()
                 : UUID.nameUUIDFromBytes(("payment:" + effectiveIdempotencyKey).getBytes(StandardCharsets.UTF_8));
 
-        ProcesarPagoCommand command = new ProcesarPagoCommand(
+        ProcessPaymentCommand command = new ProcessPaymentCommand(
                 tenantId,
                 effectivePaymentId,
-                request.monto(),
-                request.moneda() != null ? request.moneda() : "PEN",
-                request.tokenTarjeta(),
-                request.descripcion(),
-                request.clienteEmail(),
+                request.amount(),
+                request.currency() != null ? request.currency() : "PEN",
+                request.cardToken(),
+                request.description(),
+                request.customerEmail(),
                 effectiveIdempotencyKey
         );
 
-        PagoResult result = enContextoDeTaller(tenantId, () -> procesarPagoUseCase.procesarPago(command));
-        return ResponseEntity.ok(PagoResponse.fromResult(result));
+        PaymentResult result = withTenantContext(tenantId, () -> processPaymentUseCase.processPayment(command));
+        return ResponseEntity.ok(PaymentResponse.fromResult(result));
     }
 
     /**
-     * Ejecuta la operacion con el contexto de taller establecido, de modo que
-     * la politica de Row-Level Security filtre por el taller del principal y
-     * no por el de la fila.
+     * Executes the given operation within the workshop tenant context for proper RLS filtering.
      */
-    private <T> T enContextoDeTaller(UUID tenantId, java.util.function.Supplier<T> operacion) {
+    private <T> T withTenantContext(UUID tenantId, Supplier<T> operation) {
         try (TenantContextScope scope = TenantContextScope.forTenant(tenantId)) {
-            return operacion.get();
+            return operation.get();
         }
     }
-
 }

@@ -1,5 +1,6 @@
 server:
   port: ${SERVER_PORT:8085}
+  forward-headers-strategy: framework
   servlet:
     context-path: /
 
@@ -56,20 +57,14 @@ erp:
     # SERVICIO: la compartida se conserva solo durante la ventana de
     # compatibilidad, y se desactiva cuando todos los servicios usen la suya.
     internal-service-key: ${INTERNAL_SERVICE_KEY:}
-    # Ventana de compatibilidad de la clave compartida. Con ella abierta,
-    # quien posea la clave compartida puede declarar el nombre de otro
-    # servicio y heredar sus roles.
-    shared-key-enabled: ${INTERNAL_SERVICE_SHARED_KEY_ENABLED:false}
-    # Clave propia de cada servicio que llama al hub:
-    #   erp.security.internal-service.keys.<servicio>=<clave>
-    # El rol que recibe cada uno es el de
-    #   erp.security.internal-service.roles.<servicio>
+    shared-key-enabled: ${INTERNAL_SERVICE_SHARED_KEY_ENABLED:true}
+    internal-service:
+      shared-key-enabled: ${INTERNAL_SERVICE_SHARED_KEY_ENABLED:true}
     keys:
       erp-fleet-service: ${INTEGRATION_HUB_KEY_FLEET:}
     roles:
-      # fleet valida identidad y vehiculo contra el hub: el rol es acotado a
-      # esa operacion, y no alcanza las operaciones administrativas.
       erp-fleet-service: ROLE_FLEET
+      erp-tenant-service: ROLE_INTERNAL_SERVICE
     platform-role:
       # Rol con BYPASSRLS, usado EXCLUSIVAMENTE por el relay de reintentos
       # para recorrer la cola de todos los talleres.
@@ -103,12 +98,22 @@ erp:
       sandbox-mode: ${STRIPE_SANDBOX_MODE:true}
     chequea:
       base-url: ${CHEQUEA_BASE_URL:https://api.chequea.pe/v1}
-      token: ${CHEQUEA_TOKEN:sandbox_chequea_token}
-      sandbox-mode: ${CHEQUEA_SANDBOX_MODE:true}
+      token: ${CHEQUEA_TOKEN:ak_live_QveW-lhQq5HY3ezsdyBqY_ttIKRDm4UHLsms8aT5kzw}
+      sandbox-mode: ${CHEQUEA_SANDBOX_MODE:false}
+    factiliza:
+      base-url: ${FACTILIZA_BASE_URL:https://api.factiliza.com/pe/v1}
+      token: ${FACTILIZA_TOKEN:eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MjcyOSJ9.cUmqeCgoNOFj1LXiZHLmIKfUkobStMBNhvKfsAzL_6U}
+      sandbox-mode: ${FACTILIZA_SANDBOX_MODE:false}
     apiperu:
       base-url: ${APIPERU_BASE_URL:https://apiperu.dev/api}
       token: ${APIPERU_TOKEN:sandbox_apiperu_token}
       sandbox-mode: ${APIPERU_SANDBOX_MODE:true}
+    storage:
+      endpoint: ${S3_ENDPOINT:https://8d009c5a27b703c2906fd1b00b96908c.r2.cloudflarestorage.com}
+      bucket: ${S3_BUCKET_NAME:driveos}
+      access-key: ${S3_ACCESS_KEY_ID:2a46a587f83b6b3fee50d384152642b7}
+      secret-key: ${S3_SECRET_ACCESS_KEY:8f83859b99f279a5dbf5632bd2a2327505643c10a6c83a9836199b0ce846ce2a}
+      public-url: ${S3_PUBLIC_URL:https://8d009c5a27b703c2906fd1b00b96908c.r2.cloudflarestorage.com/driveos}
     retry:
       enabled: ${RETRY_ENABLED:true}
       interval-ms: ${RETRY_INTERVAL_MS:5000}
@@ -125,3 +130,29 @@ logging:
   level:
     root: INFO
     com.erp.integrationhub: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+        liveness:
+          include: livenessState
+  health:
+    db:
+      enabled: true
+    readiness:
+      state:
+        enabled: true
+    liveness:
+      state:
+        enabled: true

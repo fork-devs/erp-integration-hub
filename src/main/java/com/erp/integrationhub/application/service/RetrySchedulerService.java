@@ -1,22 +1,22 @@
 package com.erp.integrationhub.application.service;
 
-import com.erp.integrationhub.application.dto.command.EmitirComprobanteCommand;
-import com.erp.integrationhub.application.dto.result.ComprobanteResult;
+import com.erp.integrationhub.application.dto.command.EmitInvoiceCommand;
+import com.erp.integrationhub.application.dto.result.InvoiceResult;
 import com.erp.integrationhub.application.usecase.ProcessRetryQueueUseCase;
-import com.erp.integrationhub.domain.model.ComprobanteParaDeclarar;
-import com.erp.integrationhub.domain.model.ComprobanteTipo;
+import com.erp.integrationhub.domain.model.Currency;
+import com.erp.integrationhub.domain.model.DeclarationResult;
 import com.erp.integrationhub.domain.model.IdempotencyRecord;
 import com.erp.integrationhub.domain.model.IdempotencyScope;
 import com.erp.integrationhub.domain.model.IntegrationAttempt;
-import com.erp.integrationhub.domain.model.ItemComprobante;
-import com.erp.integrationhub.domain.model.Moneda;
-import com.erp.integrationhub.domain.model.ResultadoDeclaracion;
+import com.erp.integrationhub.domain.model.InvoiceItem;
+import com.erp.integrationhub.domain.model.InvoiceToDeclare;
+import com.erp.integrationhub.domain.model.InvoiceType;
 import com.erp.integrationhub.domain.model.RetryTask;
-import com.erp.integrationhub.domain.port.EmisorTributarioPort;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
-import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
+import com.erp.integrationhub.domain.port.PaymentGatewayPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
+import com.erp.integrationhub.domain.port.TaxAuthorityEmitterPort;
 import com.erp.integrationhub.domain.port.UnitOfWork;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -26,21 +26,23 @@ import java.time.Instant;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * Background worker service processing pending retries from the outbox retry queue.
+ */
 public class RetrySchedulerService implements ProcessRetryQueueUseCase {
 
-    /**
-     * Numero maximo de intentos de una operacion encolada. Con la escala de
-     * esperas por defecto, siete intentos cubren una ventana de unas 24 horas.
-     */
-    public static final int MAX_INTENTOS_REINTENTO = 7;
+    /** Maximum retry attempts for queued tasks covering backoff window. */
+    public static final int MAX_RETRY_ATTEMPTS = 7;
+    /** Backward compatibility alias for MAX_RETRY_ATTEMPTS. */
+    public static final int MAX_INTENTOS_REINTENTO = MAX_RETRY_ATTEMPTS;
 
     private static final Logger log = LoggerFactory.getLogger(RetrySchedulerService.class);
 
     private final RetryQueueRepositoryPort retryQueueRepositoryPort;
     private final IntegrationAttemptRepositoryPort attemptRepositoryPort;
     private final IdempotencyRepositoryPort idempotencyRepositoryPort;
-    private final EmisorTributarioPort emisorTributarioPort;
-    private final PasarelaDePagoPort pasarelaDePagoPort;
+    private final TaxAuthorityEmitterPort taxAuthorityEmitterPort;
+    private final PaymentGatewayPort paymentGatewayPort;
     private final ObjectMapper objectMapper;
     private final UnitOfWork unitOfWork;
 
@@ -48,14 +50,14 @@ public class RetrySchedulerService implements ProcessRetryQueueUseCase {
             RetryQueueRepositoryPort retryQueueRepositoryPort,
             IntegrationAttemptRepositoryPort attemptRepositoryPort,
             IdempotencyRepositoryPort idempotencyRepositoryPort,
-            EmisorTributarioPort emisorTributarioPort,
-            PasarelaDePagoPort pasarelaDePagoPort,
+            TaxAuthorityEmitterPort taxAuthorityEmitterPort,
+            PaymentGatewayPort paymentGatewayPort,
             UnitOfWork unitOfWork) {
         this.retryQueueRepositoryPort = retryQueueRepositoryPort;
         this.attemptRepositoryPort = attemptRepositoryPort;
         this.idempotencyRepositoryPort = idempotencyRepositoryPort;
-        this.emisorTributarioPort = emisorTributarioPort;
-        this.pasarelaDePagoPort = pasarelaDePagoPort;
+        this.taxAuthorityEmitterPort = taxAuthorityEmitterPort;
+        this.paymentGatewayPort = paymentGatewayPort;
         this.objectMapper = new ObjectMapper().findAndRegisterModules();
         this.unitOfWork = unitOfWork;
     }
@@ -67,7 +69,7 @@ public class RetrySchedulerService implements ProcessRetryQueueUseCase {
 
         for (RetryTask task : pendingTasks) {
             try {
-                log.info("Ejecutando reintento real de tarea {} para proveedor {} (Intento {}/{})",
+                log.info("Executing retry for task {} with provider {} (Attempt {}/{})",
                         task.getId(), task.getProvider(), task.getAttemptsCount() + 1, task.getMaxAttempts());
 
                 if ("EMIT_VOUCHER".equalsIgnoreCase(task.getOperation())) {
@@ -75,7 +77,7 @@ public class RetrySchedulerService implements ProcessRetryQueueUseCase {
                 } else if ("PROCESS_PAYMENT".equalsIgnoreCase(task.getOperation())) {
                     executePaymentRetry(task);
                 } else {
-                    log.warn("Operación desconocida en tarea de reintento: {}", task.getOperation());
+                    log.warn("Unknown operation in retry task: {}", task.getOperation());
                     unitOfWork.runInTransaction(() -> {
                         task.markCompleted();
                         retryQueueRepositoryPort.save(task);
@@ -84,17 +86,13 @@ public class RetrySchedulerService implements ProcessRetryQueueUseCase {
 
                 processed++;
             } catch (Exception e) {
-                log.warn("Fallo al reintentar tarea {}: {}", task.getId(), e.getMessage());
+                log.warn("Failed to retry task {}: {}", task.getId(), e.getMessage());
                 unitOfWork.runInTransaction(() -> {
                     task.recordFailure(e.getMessage());
                     retryQueueRepositoryPort.save(task);
 
-                    // Cuando la tarea agota sus intentos, el estado de
-                    // AGOTADO queda en la bitacora de intentos. Sin el, la
-                    // profundidad de la cola de muertos no es consultable: la
-                    // bitacora solo dira que hubo un fallo mas.
-                    boolean agotada = "DLQ".equals(task.getStatus());
-                    IntegrationAttempt intento = agotada
+                    boolean exhausted = "DLQ".equals(task.getStatus());
+                    IntegrationAttempt attempt = exhausted
                             ? IntegrationAttempt.dlq(
                                     task.getTenantId(),
                                     task.getProvider(),
@@ -111,14 +109,11 @@ public class RetrySchedulerService implements ProcessRetryQueueUseCase {
                                     e.getMessage()
                             );
 
-                    // El relay registra el intento de una operacion de un
-                    // taller que no es el suyo: la escritura va con el rol de
-                    // plataforma, o violaria la politica de aislamiento.
                     if (attemptRepositoryPort instanceof com.erp.integrationhub.infrastructure.persistence.adapter
                             .IntegrationAttemptPersistenceAdapter adapter) {
-                        adapter.saveWithPlatformScope(intento);
+                        adapter.saveWithPlatformScope(attempt);
                     } else {
-                        attemptRepositoryPort.save(intento);
+                        attemptRepositoryPort.save(attempt);
                     }
                 });
             }
@@ -127,102 +122,83 @@ public class RetrySchedulerService implements ProcessRetryQueueUseCase {
         return processed;
     }
 
-    /**
-     * Escribe el resultado en el registro de idempotencia, por su clave de
-     * negocio. Si la fila no existe, la reclama antes: es la primera vez que
-     * se registra ese resultado.
-     */
-    private void actualizarIdempotencia(EmitirComprobanteCommand cmd, String payload) {
-        String clave = cmd.idempotencyKey() != null ? cmd.idempotencyKey() : cmd.comprobanteId().toString();
-        IdempotencyRecord existente = idempotencyRepositoryPort
-                .findByTenantAndScopeAndKey(cmd.tenantId(), IdempotencyScope.VOUCHER, clave)
+    private void updateIdempotency(EmitInvoiceCommand cmd, String payload) {
+        String key = cmd.idempotencyKey() != null ? cmd.idempotencyKey() : cmd.invoiceId().toString();
+        IdempotencyRecord existing = idempotencyRepositoryPort
+                .findByTenantAndScopeAndKey(cmd.tenantId(), IdempotencyScope.VOUCHER, key)
                 .orElse(null);
-        if (existente != null) {
-            idempotencyRepositoryPort.updateByKey(cmd.tenantId(), IdempotencyScope.VOUCHER, clave,
-                    existente.completed(payload, null));
+        if (existing != null) {
+            idempotencyRepositoryPort.updateByKey(cmd.tenantId(), IdempotencyScope.VOUCHER, key,
+                    existing.completed(payload, null));
             return;
         }
-        IdempotencyRecord claimado = idempotencyRepositoryPort
-                .claim(cmd.tenantId(), IdempotencyScope.VOUCHER, clave, null);
-        idempotencyRepositoryPort.updateByKey(cmd.tenantId(), IdempotencyScope.VOUCHER, clave,
-                claimado.completed(payload, null));
+        IdempotencyRecord claimed = idempotencyRepositoryPort
+                .claim(cmd.tenantId(), IdempotencyScope.VOUCHER, key, null);
+        idempotencyRepositoryPort.updateByKey(cmd.tenantId(), IdempotencyScope.VOUCHER, key,
+                claimed.completed(payload, null));
     }
 
     private void executeVoucherRetry(RetryTask task) throws Exception {
-        EmitirComprobanteCommand cmd = objectMapper.readValue(task.getPayload(), EmitirComprobanteCommand.class);
+        EmitInvoiceCommand cmd = objectMapper.readValue(task.getPayload(), EmitInvoiceCommand.class);
 
-        ComprobanteTipo tipo = ComprobanteTipo.valueOf(cmd.tipo().toUpperCase().trim());
-        Moneda moneda = "USD".equalsIgnoreCase(cmd.moneda()) ? Moneda.USD : Moneda.PEN;
+        InvoiceType type = InvoiceType.valueOf(cmd.type().toUpperCase().trim());
+        Currency currency = "USD".equalsIgnoreCase(cmd.currency()) ? Currency.USD : Currency.PEN;
 
-        List<ItemComprobante> items = cmd.items().stream()
-                .map(i -> new ItemComprobante(
-                        i.unidadMedida(),
-                        i.descripcion(),
-                        i.cantidad(),
-                        i.valorUnitario(),
-                        i.precioUnitario(),
-                        i.igv(),
+        List<InvoiceItem> items = cmd.items().stream()
+                .map(i -> new InvoiceItem(
+                        i.unitOfMeasure(),
+                        i.description(),
+                        i.quantity(),
+                        i.unitValue(),
+                        i.unitPrice(),
+                        i.taxAmount(),
                         i.total()
                 ))
                 .collect(Collectors.toList());
 
-        ComprobanteParaDeclarar comprobante = new ComprobanteParaDeclarar(
+        InvoiceToDeclare invoice = new InvoiceToDeclare(
                 cmd.tenantId(),
-                cmd.comprobanteId(),
-                tipo,
-                cmd.serie(),
-                cmd.numero(),
-                cmd.clienteTipoDoc(),
-                cmd.clienteNumDoc(),
-                cmd.clienteDenominacion(),
-                cmd.clienteDireccion(),
-                cmd.clienteEmail(),
-                moneda,
-                cmd.totalGravada(),
-                cmd.totalIgv(),
+                cmd.invoiceId(),
+                type,
+                cmd.series(),
+                cmd.number(),
+                cmd.customerDocType(),
+                cmd.customerDocNumber(),
+                cmd.customerLegalName(),
+                cmd.customerAddress(),
+                cmd.customerEmail(),
+                currency,
+                cmd.totalTaxable(),
+                cmd.totalTax(),
                 cmd.total(),
                 items,
-                cmd.fechaEmision()
+                cmd.issueDate()
         );
 
-        ResultadoDeclaracion resultado = emisorTributarioPort.emitirComprobante(comprobante);
+        DeclarationResult result = taxAuthorityEmitterPort.emitInvoice(invoice);
 
-        if (!resultado.exitoso()) {
-            // El proveedor NO emito el comprobante: reintentar es seguro.
-            throw new RuntimeException("Respuesta no exitosa de APISUNAT/SUNAT: " + resultado.mensajeSunat());
+        if (!result.successful()) {
+            throw new RuntimeException("Unsuccessful response from APISUNAT/SUNAT: " + result.sunatMessage());
         }
 
-        // El proveedor YA emitio el comprobante. A partir de aqui no se
-        // puede reenviar: una segunda emision seria un comprobante
-        // duplicado, que es un problema mucho mayor que un registro local
-        // que falta.
-        //
-        // El estado de la tarea y el registro de idempotencia se confirman
-        // juntos: antes, un fallo al escribir la idempotencia dejaba la
-        // tarea sin marcar, y el planificador la reprogramaba para reenviar
-        // el comprobante a SUNAT, que ya lo habia emitido.
-        // Actualizar el registro de idempotencia con los datos reales de SUNAT (Issue 2 resuelto)
-        ComprobanteResult finalResult = new ComprobanteResult(
-                cmd.comprobanteId(),
+        InvoiceResult finalResult = new InvoiceResult(
+                cmd.invoiceId(),
                 true,
-                resultado.estadoSunat(),
-                resultado.codigoRespuestaSunat(),
-                resultado.mensajeSunat(),
-                resultado.pdfUrl(),
-                resultado.xmlUrl(),
-                resultado.cdrUrl(),
-                resultado.hashCdr(),
+                result.sunatStatus(),
+                result.sunatResponseCode(),
+                result.sunatMessage(),
+                result.pdfUrl(),
+                result.xmlUrl(),
+                result.cdrUrl(),
+                result.cdrHash(),
                 false
         );
 
-        // El payload se serializa antes del limite transaccional: la lambda
-        // no puede propagar una excepcion comprobada, y un fallo de
-        // serializacion no debe confundirse con un fallo de persistencia.
         final String idempotencyPayload;
         try {
             idempotencyPayload = objectMapper.writeValueAsString(finalResult);
         } catch (Exception e) {
-            throw new RuntimeException("No se pudo serializar el resultado del comprobante", e);
+            throw new RuntimeException("Could not serialize invoice result", e);
         }
 
         try {
@@ -230,21 +206,11 @@ public class RetrySchedulerService implements ProcessRetryQueueUseCase {
                 task.markCompleted();
                 retryQueueRepositoryPort.save(task);
 
-                // La actualizacion va por la clave de negocio: el resultado
-                // llega a la fila que ya existe, y no se inserta una nueva.
-                // Si la fila no existe, se reclama: es la primera vez que se
-                // registra ese resultado.
                 try {
-                    actualizarIdempotencia(cmd, idempotencyPayload);
+                    updateIdempotency(cmd, idempotencyPayload);
                 } catch (RuntimeException e) {
-                    // El comprobante YA se emitio, y eso esta registrado en
-                    // la tarea y en el intento. La cache de idempotencia es
-                    // una comodidad: que su escritura falle no puede
-                    // convertir un reintento EXITOSO en un fallo, ni
-                    // reprogramar la emision de un comprobante que SUNAT ya
-                    // acepto.
-                    log.error("No se pudo actualizar el registro de idempotencia del comprobante {}: {}",
-                            cmd.comprobanteId(), e.getMessage(), e);
+                    log.error("Failed to update idempotency cache for invoice {}: {}",
+                            cmd.invoiceId(), e.getMessage(), e);
                 }
 
                 attemptRepositoryPort.save(IntegrationAttempt.ok(
@@ -256,17 +222,11 @@ public class RetrySchedulerService implements ProcessRetryQueueUseCase {
                 ));
             });
         } catch (Exception e) {
-            // El comprobante existe en SUNAT, pero no se pudo registrar aqui.
-            // La tarea pasa a la cola de muertos, que es terminal: NO se
-            // reprograma, de modo que el comprobante no se reenvia. La falta
-            // del registro queda como evidencia operativa, que exige
-            // atencion manual, y no como un motivo para duplicar el
-            // comprobante.
-            log.error("El comprobante {} fue emitido por el proveedor pero no se pudo registrar localmente: {}",
-                    cmd.comprobanteId(), e.getMessage());
+            log.error("Invoice {} was issued by provider but failed local registration: {}",
+                    cmd.invoiceId(), e.getMessage());
 
             unitOfWork.runInTransaction(() -> {
-                task.markDeadLetter("Comprobante emitido por el proveedor, pero no se pudo registrar localmente: "
+                task.markDeadLetter("Invoice emitted by provider, but failed local persistence: "
                         + e.getMessage());
                 retryQueueRepositoryPort.save(task);
 
@@ -276,7 +236,7 @@ public class RetrySchedulerService implements ProcessRetryQueueUseCase {
                         task.getOperation(),
                         task.getReferenceId(),
                         task.getAttemptsCount() + 1,
-                        "Comprobante emitido por el proveedor, pero no se pudo registrar localmente: " + e.getMessage()
+                        "Invoice emitted by provider, but failed local persistence: " + e.getMessage()
                 ));
             });
         }

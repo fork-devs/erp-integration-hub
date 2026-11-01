@@ -23,14 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * El cliente del conjunto de claves se comporta como debe.
- *
- * <p>Estas comprobaciones son las MISMAS en el gateway y en el hub: los dos
- * servicios tienen una copia del cliente, y no hay todavia una biblioteca
- * compartida entre ellos. Mantener las comprobaciones identicas es lo que
- * impide que las copias diverjan sin que nadie se entere.
- *
- * <p>Ver docs/doc-estado-implementacion.md, hallazgos P1 6.29 y P0 5.12.
+ * Unit tests verifying JWKS key management, caching, retry, and URL policy enforcement.
  */
 class JwksKeyManagerTest {
 
@@ -86,7 +79,7 @@ class JwksKeyManagerTest {
         JwksKeyManager manager = new JwksKeyManager(url, List.of("dev"));
         assertNotNull(manager.getPublicKey("clave-conocida"), "La clave debe cargarse");
 
-        // El emisor pasa a estar inalcanzable.
+        // Simulate auth server becoming unreachable.
         servidor.stop(0);
         servidor = null;
 

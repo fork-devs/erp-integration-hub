@@ -1,19 +1,21 @@
 package com.erp.integrationhub.application.service;
 
-import com.erp.integrationhub.application.dto.command.EmitirComprobanteCommand;
-import com.erp.integrationhub.application.dto.command.ItemComprobanteCommand;
+import com.erp.integrationhub.application.dto.command.EmitInvoiceCommand;
+import com.erp.integrationhub.application.dto.command.InvoiceItemCommand;
+import com.erp.integrationhub.domain.model.DeclarationResult;
+import com.erp.integrationhub.domain.model.IdempotencyRecord;
+import com.erp.integrationhub.domain.model.IdempotencyScope;
 import com.erp.integrationhub.domain.model.ProviderType;
-import com.erp.integrationhub.domain.model.ResultadoDeclaracion;
 import com.erp.integrationhub.domain.model.RetryTask;
-import com.erp.integrationhub.domain.port.EmisorTributarioPort;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
-import com.erp.integrationhub.domain.port.PasarelaDePagoPort;
+import com.erp.integrationhub.domain.port.PaymentGatewayPort;
 import com.erp.integrationhub.domain.port.RetryQueueRepositoryPort;
+import com.erp.integrationhub.domain.port.TaxAuthorityEmitterPort;
+import com.erp.integrationhub.support.DirectUnitOfWork;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
-import com.erp.integrationhub.support.DirectUnitOfWork;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -23,6 +25,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -47,32 +50,29 @@ class RetrySchedulerServiceTest {
     private IdempotencyRepositoryPort idempotencyRepositoryPort;
 
     @Mock
-    private EmisorTributarioPort emisorTributarioPort;
+    private TaxAuthorityEmitterPort taxAuthorityEmitterPort;
 
     @Mock
-    private PasarelaDePagoPort pasarelaDePagoPort;
+    private PaymentGatewayPort paymentGatewayPort;
 
     private RetrySchedulerService retrySchedulerService;
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
     @BeforeEach
     void setUp() {
-        // La clave de idempotencia se reclama y despues se actualiza por su
-        // clave de negocio. Los dobles son lenient: no todos los tests
-        // llegan a la reclamacion.
         lenient().when(idempotencyRepositoryPort.findByTenantAndScopeAndKey(any(), any(), any()))
-                .thenReturn(java.util.Optional.empty());
+                .thenReturn(Optional.empty());
         lenient().when(idempotencyRepositoryPort.claim(any(), any(), any(), any()))
-                .thenReturn(com.erp.integrationhub.domain.model.IdempotencyRecord.claiming(
-                        java.util.UUID.randomUUID(),
-                        com.erp.integrationhub.domain.model.IdempotencyScope.VOUCHER,
+                .thenReturn(IdempotencyRecord.claiming(
+                        UUID.randomUUID(),
+                        IdempotencyScope.VOUCHER,
                         "clave", "huella"));
         retrySchedulerService = new RetrySchedulerService(
                 retryQueueRepositoryPort,
                 attemptRepositoryPort,
                 idempotencyRepositoryPort,
-                emisorTributarioPort,
-                pasarelaDePagoPort,
+                taxAuthorityEmitterPort,
+                paymentGatewayPort,
                 DirectUnitOfWork.INSTANCE
         );
     }
@@ -81,11 +81,11 @@ class RetrySchedulerServiceTest {
     @DisplayName("Should process pending retry tasks, execute provider, update idempotency, and mark completed")
     void processPendingRetries_WhenTasksExist_ShouldExecuteProviderAndMarkCompleted() throws Exception {
         UUID tenantId = UUID.randomUUID();
-        UUID comprobanteId = UUID.randomUUID();
+        UUID invoiceId = UUID.randomUUID();
 
-        EmitirComprobanteCommand cmd = new EmitirComprobanteCommand(
+        EmitInvoiceCommand cmd = new EmitInvoiceCommand(
                 tenantId,
-                comprobanteId,
+                invoiceId,
                 "FACTURA",
                 "F001",
                 123,
@@ -98,19 +98,19 @@ class RetrySchedulerServiceTest {
                 new BigDecimal("100.00"),
                 new BigDecimal("18.00"),
                 new BigDecimal("118.00"),
-                List.of(new ItemComprobanteCommand("NIU", "Servicio", BigDecimal.ONE, new BigDecimal("100.00"), new BigDecimal("118.00"), new BigDecimal("18.00"), new BigDecimal("118.00"))),
+                List.of(new InvoiceItemCommand("NIU", "Servicio", BigDecimal.ONE, new BigDecimal("100.00"), new BigDecimal("118.00"), new BigDecimal("18.00"), new BigDecimal("118.00"))),
                 LocalDate.now(),
                 "idem-key-1"
         );
 
         String jsonPayload = objectMapper.writeValueAsString(cmd);
-        RetryTask task1 = RetryTask.create(tenantId, ProviderType.APISUNAT, "EMIT_VOUCHER", comprobanteId, jsonPayload, 5);
+        RetryTask task1 = RetryTask.create(tenantId, ProviderType.APISUNAT, "EMIT_VOUCHER", invoiceId, jsonPayload, 5);
         RetryTask task2 = RetryTask.create(tenantId, ProviderType.STRIPE, "PROCESS_PAYMENT", UUID.randomUUID(), "{}", 5);
 
         when(retryQueueRepositoryPort.findPendingTasks(any(Instant.class), eq(10)))
                 .thenReturn(List.of(task1, task2));
-        when(emisorTributarioPort.emitirComprobante(any()))
-                .thenReturn(ResultadoDeclaracion.aceptado("0", "Aceptado por SUNAT", "pdf", "xml", "cdr", "hash"));
+        when(taxAuthorityEmitterPort.emitInvoice(any()))
+                .thenReturn(DeclarationResult.accepted("0", "Aceptado por SUNAT", "pdf", "xml", "cdr", "hash"));
 
         int processed = retrySchedulerService.processPendingRetries(10);
 
@@ -118,9 +118,7 @@ class RetrySchedulerServiceTest {
         assertEquals("COMPLETED", task1.getStatus());
         assertEquals("COMPLETED", task2.getStatus());
 
-        verify(emisorTributarioPort).emitirComprobante(any());
-        // El resultado se escribe por la clave de negocio, sobre la fila
-        // reclamada: no se inserta una fila nueva.
+        verify(taxAuthorityEmitterPort).emitInvoice(any());
         verify(idempotencyRepositoryPort).updateByKey(any(), any(), any(), any());
         verify(idempotencyRepositoryPort, never()).save(any());
         verify(retryQueueRepositoryPort, times(2)).save(any());

@@ -1,5 +1,6 @@
 package com.erp.integrationhub.infrastructure.security;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -10,74 +11,81 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Limite de peticiones por taller para las consultas de identidad.
+ * Per-tenant rate limiter for external identity and vehicle queries (SUNAT/SUNARP).
  *
- * <p>Una consulta de RUC o de placa llama a un proveedor externo. Sin
- * limite, un taller (o un atacante que se haga pasar por uno) puede
- * saturar el proveedor externo con un volumen ilimitado de consultas, y
- * agotar la cuota de la plataforma con la que todo el mundo comparte.
- *
- * <p>El limite es POR TALLER, porque el coste de la consulta se paga entre
- * todos los que comparten la cuota del proveedor.
+ * <p>Prevents noisy-neighbor starvation and quota exhaustion on upstream identity providers.
  */
 @Component
 public class TenantRateLimiter {
 
-    private final int maximoPorVentana;
-    private final Duration ventana;
-    private final Map<UUID, Ventana> ventanas = new ConcurrentHashMap<>();
+    private final int maxPerWindow;
+    private final Duration windowDuration;
+    private final Map<UUID, RateWindow> windows = new ConcurrentHashMap<>();
 
     public TenantRateLimiter(
-            @org.springframework.beans.factory.annotation.Value("${erp.integration.identity-rate-limit.max:60}") int maximoPorVentana,
-            @org.springframework.beans.factory.annotation.Value("${erp.integration.identity-rate-limit.window-seconds:60}") long ventanaSegundos) {
-        this.maximoPorVentana = maximoPorVentana;
-        this.ventana = Duration.ofSeconds(ventanaSegundos);
+            @Value("${erp.integration.identity-rate-limit.max:60}") int maxPerWindow,
+            @Value("${erp.integration.identity-rate-limit.window-seconds:60}") long windowSeconds) {
+        this.maxPerWindow = maxPerWindow;
+        this.windowDuration = Duration.ofSeconds(windowSeconds);
     }
 
     /**
-     * Intenta consumir una unidad de la cuota del taller.
+     * Attempts to acquire one permit for the given tenant within the current sliding window.
      *
-     * @return true si la peticion se admite
+     * @param tenantId workshop/tenant identifier
+     * @return true if permit is granted, false if rate limit exceeded
      */
-    public boolean intentar(UUID tenantId) {
+    public boolean tryAcquire(UUID tenantId) {
         if (tenantId == null) {
             return true;
         }
-        Instant ahora = Instant.now();
-        ventanas.compute(tenantId, (taller, existente) -> {
-            if (existente == null || existente.expiraEn.isBefore(ahora)) {
-                return new Ventana(ahora.plus(this.ventana), new AtomicInteger(1));
+        Instant now = Instant.now();
+        windows.compute(tenantId, (tenant, existing) -> {
+            if (existing == null || existing.expiresAt.isBefore(now)) {
+                return new RateWindow(now.plus(this.windowDuration), new AtomicInteger(1));
             }
-            existente.contador.incrementAndGet();
-            return existente;
+            existing.counter.incrementAndGet();
+            return existing;
         });
-        Ventana ventana = ventanas.get(tenantId);
-        return ventana != null && ventana.contador.get() <= maximoPorVentana;
+        RateWindow window = windows.get(tenantId);
+        return window != null && window.counter.get() <= maxPerWindow;
     }
 
     /**
-     * Tiempo que hay que esperar para que la cuota se libere. Cero si la
-     * peticion se admite.
+     * Calculates the remaining seconds before the tenant rate window resets.
+     *
+     * @param tenantId workshop/tenant identifier
+     * @return seconds to wait, or 0 if within limits
      */
-    public long segundosDeEspera(UUID tenantId) {
+    public long waitSeconds(UUID tenantId) {
         if (tenantId == null) {
             return 0;
         }
-        Ventana ventana = ventanas.get(tenantId);
-        if (ventana == null) {
+        RateWindow window = windows.get(tenantId);
+        if (window == null) {
             return 0;
         }
-        long restante = Duration.between(Instant.now(), ventana.expiraEn).getSeconds();
-        return Math.max(restante, 1);
+        long remaining = Duration.between(Instant.now(), window.expiresAt).getSeconds();
+        return Math.max(remaining, 1);
     }
 
-    private static final class Ventana {
-        private final Instant expiraEn;
-        private final AtomicInteger contador;
+    // --- Backward compatibility methods ---
 
-        private Ventana(Instant expiraEn, AtomicInteger contador) {
-            this.expiraEn = expiraEn;
-            this.contador = contador;
+    public boolean intentar(UUID tenantId) {
+        return tryAcquire(tenantId);
+    }
+
+    public long segundosDeEspera(UUID tenantId) {
+        return waitSeconds(tenantId);
+    }
+
+    private static final class RateWindow {
+        private final Instant expiresAt;
+        private final AtomicInteger counter;
+
+        private RateWindow(Instant expiresAt, AtomicInteger counter) {
+            this.expiresAt = expiresAt;
+            this.counter = counter;
         }
     }
 }

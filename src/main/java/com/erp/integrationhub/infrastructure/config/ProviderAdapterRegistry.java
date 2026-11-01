@@ -83,8 +83,9 @@ public class ProviderAdapterRegistry {
     @Bean
     public IdentityValidatorPort identityValidatorPort(
             @Value("${erp.integration.chequea.base-url:https://api.chequea.pe/v1}") String baseUrl,
-            @Value("${erp.integration.chequea.token:}") String token) {
-        if (simulatedMode) {
+            @Value("${erp.integration.chequea.token:}") String token,
+            @Value("${erp.integration.chequea.sandbox-mode:false}") boolean sandboxMode) {
+        if (simulatedMode || sandboxMode) {
             return new SimulatedChequeaPeAdapter();
         }
         return new ChequeaPeRucValidationAdapter(baseUrl, token, false);

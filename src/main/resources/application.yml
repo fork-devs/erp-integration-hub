@@ -114,6 +114,12 @@ erp:
       base-url: ${APIPERU_BASE_URL:https://apiperu.dev/api}
       token: ${APIPERU_TOKEN:sandbox_apiperu_token}
       sandbox-mode: ${APIPERU_SANDBOX_MODE:true}
+    storage:
+      endpoint: ${S3_ENDPOINT:https://8d009c5a27b703c2906fd1b00b96908c.r2.cloudflarestorage.com}
+      bucket: ${S3_BUCKET_NAME:driveos}
+      access-key: ${S3_ACCESS_KEY_ID:2a46a587f83b6b3fee50d384152642b7}
+      secret-key: ${S3_SECRET_ACCESS_KEY:8f83859b99f279a5dbf5632bd2a2327505643c10a6c83a9836199b0ce846ce2a}
+      public-url: ${S3_PUBLIC_URL:https://8d009c5a27b703c2906fd1b00b96908c.r2.cloudflarestorage.com/driveos}
     retry:
       enabled: ${RETRY_ENABLED:true}
       interval-ms: ${RETRY_INTERVAL_MS:5000}

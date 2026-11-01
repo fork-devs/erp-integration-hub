@@ -44,6 +44,7 @@ public class IdentityValidationController {
     private final QueryPersonalIdentityUseCase queryPersonalIdentityUseCase;
     private final TenantRateLimiter rateLimiter;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public IdentityValidationController(
             QueryRucUseCase queryRucUseCase,
             QueryPlateUseCase queryPlateUseCase,

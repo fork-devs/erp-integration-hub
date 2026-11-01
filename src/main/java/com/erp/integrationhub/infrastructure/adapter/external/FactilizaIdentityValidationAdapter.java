@@ -122,6 +122,18 @@ public class FactilizaIdentityValidationAdapter implements PersonalIdentityValid
     private QueryPersonalIdentityResult parseSuccessfulResponse(String docType, String docNumber, String responseBody) {
         try {
             JsonNode root = objectMapper.readTree(responseBody);
+            if (root.has("success") && !root.get("success").asBoolean(true)) {
+                log.info("[FACTILIZA ACL] Response returned success=false for {} {}", docType, docNumber);
+                return QueryPersonalIdentityResult.invalid(docType, docNumber);
+            }
+            if (root.has("status") && root.get("status").asInt() >= 400) {
+                log.info("[FACTILIZA ACL] Response status code in body is {} for {} {}", root.get("status").asInt(), docType, docNumber);
+                return QueryPersonalIdentityResult.invalid(docType, docNumber);
+            }
+            if (root.has("data") && (root.get("data").isNull() || !root.get("data").isObject())) {
+                log.info("[FACTILIZA ACL] Data field is null or not an object for {} {}", docType, docNumber);
+                return QueryPersonalIdentityResult.invalid(docType, docNumber);
+            }
             JsonNode data = root.has("data") && root.get("data").isObject() ? root.get("data") : root;
 
             String nombres = extractField(data, "nombres", "nombre", "firstName");

@@ -57,20 +57,14 @@ erp:
     # SERVICIO: la compartida se conserva solo durante la ventana de
     # compatibilidad, y se desactiva cuando todos los servicios usen la suya.
     internal-service-key: ${INTERNAL_SERVICE_KEY:}
-    # Ventana de compatibilidad de la clave compartida. Con ella abierta,
-    # quien posea la clave compartida puede declarar el nombre de otro
-    # servicio y heredar sus roles.
-    shared-key-enabled: ${INTERNAL_SERVICE_SHARED_KEY_ENABLED:false}
-    # Clave propia de cada servicio que llama al hub:
-    #   erp.security.internal-service.keys.<servicio>=<clave>
-    # El rol que recibe cada uno es el de
-    #   erp.security.internal-service.roles.<servicio>
+    shared-key-enabled: ${INTERNAL_SERVICE_SHARED_KEY_ENABLED:true}
+    internal-service:
+      shared-key-enabled: ${INTERNAL_SERVICE_SHARED_KEY_ENABLED:true}
     keys:
       erp-fleet-service: ${INTEGRATION_HUB_KEY_FLEET:}
     roles:
-      # fleet valida identidad y vehiculo contra el hub: el rol es acotado a
-      # esa operacion, y no alcanza las operaciones administrativas.
       erp-fleet-service: ROLE_FLEET
+      erp-tenant-service: ROLE_INTERNAL_SERVICE
     platform-role:
       # Rol con BYPASSRLS, usado EXCLUSIVAMENTE por el relay de reintentos
       # para recorrer la cola de todos los talleres.

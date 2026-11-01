@@ -46,6 +46,7 @@ public class JwksKeyManager {
 
     private final String jwksUrl;
     private final ConcurrentHashMap<String, RSAPublicKey> publicKeyMap = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, RSAPublicKey> manualKeyMap = new ConcurrentHashMap<>();
 
     /** Timestamp of the last successful key set download. */
     private volatile Instant lastSuccessTime = Instant.EPOCH;
@@ -62,6 +63,13 @@ public class JwksKeyManager {
     }
 
     public RSAPublicKey getPublicKey(String keyId) {
+        if (keyId != null) {
+            RSAPublicKey manual = manualKeyMap.get(keyId);
+            if (manual != null) {
+                return manual;
+            }
+        }
+
         // Verify cache freshness BEFORE returning a known key:
         // otherwise a rotated key would remain valid throughout the cache window.
         refrescarSiProcede(false);
@@ -87,6 +95,7 @@ public class JwksKeyManager {
 
     public void registerManualKey(String keyId, RSAPublicKey publicKey) {
         if (keyId != null && publicKey != null) {
+            manualKeyMap.put(keyId, publicKey);
             publicKeyMap.put(keyId, publicKey);
         }
     }

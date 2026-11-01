@@ -21,7 +21,7 @@ public class SecurityConfig {
     @Value("${erp.security.internal-service-key:}")
     private String internalServiceKey;
 
-    @Value("${erp.security.internal-service.shared-key-enabled:false}")
+    @Value("${erp.security.internal-service.shared-key-enabled:${erp.security.shared-key-enabled:true}}")
     private boolean claveCompartidaHabilitada;
 
     /**

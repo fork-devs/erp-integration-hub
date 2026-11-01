@@ -13,17 +13,16 @@ import java.util.UUID;
  * taller efectivo procede del principal autenticado. Cuando viene cabecera, se
  * contrasta con el principal y la peticion se rechaza si no coinciden, de
  * modo que declararla no puede ampliar el acceso, solo acotarlo.
- *
- * <p>Ver docs/doc-estado-implementacion.md, hallazgo P1 6.53.
  */
 public final class TenantResolver {
+
+    public static final UUID PLATFORM_TENANT_ID = UUID.fromString("00000000-0000-0000-0000-000000000000");
 
     private TenantResolver() {
     }
 
     /**
-     * Taller efectivo de una operacion de negocio. Siempre es un taller
-     * concreto: sin el, no hay sobre que operar.
+     * Taller efectivo de una operacion de negocio.
      */
     public static UUID resolveForOperation(UUID requestedTenantId, AuthenticatedUser user) {
         if (user == null) {
@@ -33,6 +32,9 @@ public final class TenantResolver {
         if (requestedTenantId == null) {
             if (user.tenantId() != null) {
                 return user.tenantId();
+            }
+            if (user.isPlatformAdmin() || user.isInternalService() || user.isSuperAdmin()) {
+                return PLATFORM_TENANT_ID;
             }
             throw new TenantContextMissingException(
                     "La operacion requiere un taller y el principal no lo aporta.");

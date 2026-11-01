@@ -21,7 +21,9 @@ public class IntegrationRetryQueueScheduler {
 
     @Scheduled(fixedDelayString = "${erp.integration.retry.interval-ms:5000}")
     public void runRetryQueueRelay() {
-        try {
+        try (com.erp.integrationhub.interfaces.rest.support.TenantContextScope scope =
+                     com.erp.integrationhub.interfaces.rest.support.TenantContextScope.forTenant(
+                             com.erp.integrationhub.interfaces.rest.support.TenantResolver.PLATFORM_TENANT_ID)) {
             int processed = processRetryQueueUseCase.processPendingRetries(20);
             if (processed > 0) {
                 log.info("Procesadas {} tareas pendientes de reintento en integration-hub", processed);

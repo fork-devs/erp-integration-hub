@@ -8,6 +8,7 @@ import com.erp.integrationhub.application.dto.result.RucResult;
 import com.erp.integrationhub.application.usecase.QueryPersonalIdentityUseCase;
 import com.erp.integrationhub.application.usecase.QueryPlateUseCase;
 import com.erp.integrationhub.application.usecase.QueryRucUseCase;
+import com.erp.integrationhub.infrastructure.security.AuthenticatedUser;
 import com.erp.integrationhub.infrastructure.security.TenantRateLimiter;
 import com.erp.integrationhub.interfaces.rest.response.PlateResponse;
 import com.erp.integrationhub.interfaces.rest.response.RucResponse;
@@ -120,7 +121,7 @@ public class IdentityValidationController {
     }
 
     /**
-     * Executes the given operation within the workshop tenant context for proper RLS filtering.
+     * Executes identity lookup query (DNI, CE, RUC) across official registries.
      */
     @GetMapping("/lookup")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'ADMIN_TALLER', 'SUPERADMIN', 'ASESOR', 'MECANICO', 'INTERNAL_SERVICE', 'ROLE_FLEET')")
@@ -129,14 +130,27 @@ public class IdentityValidationController {
             @RequestParam(name = "type", required = false, defaultValue = "RUC") String type,
             @RequestParam(name = "number", required = false) String number,
             @RequestParam(name = "documentType", required = false) String docType,
-            @RequestParam(name = "documentNumber", required = false) String docNumber
+            @RequestParam(name = "documentNumber", required = false) String docNumber,
+            @RequestHeader(value = "X-Tenant-ID", required = false) UUID requestedTenantId
     ) {
         String resolvedType = (docType != null ? docType : type).toUpperCase().trim();
         String resolvedNumber = (docNumber != null ? docNumber : (number != null ? number : "")).trim();
 
+        UUID effectiveTenantId = requestedTenantId;
+        if (effectiveTenantId == null) {
+            AuthenticatedUser currentUser = AuthenticatedUserHolder.current();
+            if (currentUser != null && currentUser.tenantId() != null && !currentUser.tenantId().equals(TenantResolver.PLATFORM_TENANT_ID)) {
+                effectiveTenantId = currentUser.tenantId();
+            } else {
+                effectiveTenantId = TenantResolver.PLATFORM_TENANT_ID;
+            }
+        }
+
         if ("RUC".equalsIgnoreCase(resolvedType) && resolvedNumber.length() == 11) {
             try {
-                RucResult rucResult = queryRucUseCase.queryRuc(new QueryRucCommand(UUID.randomUUID(), resolvedNumber));
+                UUID tenant = effectiveTenantId;
+                RucResult rucResult = withTenantContext(tenant, () ->
+                        queryRucUseCase.queryRuc(new QueryRucCommand(tenant, resolvedNumber)));
                 if (rucResult != null && rucResult.valid()) {
                     Map<String, Object> response = new LinkedHashMap<>();
                     response.put("type", "RUC");
@@ -156,7 +170,9 @@ public class IdentityValidationController {
         if (queryPersonalIdentityUseCase != null &&
                 ("DNI".equalsIgnoreCase(resolvedType) || "CE".equalsIgnoreCase(resolvedType) || "CEE".equalsIgnoreCase(resolvedType) || "CARNET_EXTRANJERIA".equalsIgnoreCase(resolvedType))) {
             try {
-                PersonalIdentityResult identity = queryPersonalIdentityUseCase.queryPersonalIdentity(UUID.randomUUID(), resolvedType, resolvedNumber);
+                UUID tenant = effectiveTenantId;
+                PersonalIdentityResult identity = withTenantContext(tenant, () ->
+                        queryPersonalIdentityUseCase.queryPersonalIdentity(tenant, resolvedType, resolvedNumber));
                 if (identity != null && identity.valid()) {
                     Map<String, Object> response = new LinkedHashMap<>();
                     response.put("type", resolvedType);
@@ -173,15 +189,13 @@ public class IdentityValidationController {
             } catch (Exception ignored) {}
         }
 
-        Map<String, Object> fallback = new LinkedHashMap<>();
-        fallback.put("type", resolvedType);
-        fallback.put("documentNumber", resolvedNumber);
-        fallback.put("firstName", "Cliente");
-        fallback.put("lastName", "General");
-        fallback.put("fullName", "Cliente General");
-        fallback.put("verified", false);
-        fallback.put("source", "RENIEC".equalsIgnoreCase(resolvedType) ? "RENIEC" : "SUNAT");
-        return ResponseEntity.ok(fallback);
+        Map<String, Object> notFound = new LinkedHashMap<>();
+        notFound.put("type", resolvedType);
+        notFound.put("documentNumber", resolvedNumber);
+        notFound.put("verified", false);
+        notFound.put("source", "DNI".equalsIgnoreCase(resolvedType) ? "RENIEC" : "SUNAT");
+        notFound.put("message", "Documento no encontrado o no valido ante la entidad oficial");
+        return ResponseEntity.ok(notFound);
     }
 
     private <T> T withTenantContext(UUID tenantId, Supplier<T> operation) {

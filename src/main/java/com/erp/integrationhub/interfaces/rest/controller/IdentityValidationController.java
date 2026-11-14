@@ -136,15 +136,7 @@ public class IdentityValidationController {
         String resolvedType = (docType != null ? docType : type).toUpperCase().trim();
         String resolvedNumber = (docNumber != null ? docNumber : (number != null ? number : "")).trim();
 
-        UUID effectiveTenantId = requestedTenantId;
-        if (effectiveTenantId == null) {
-            AuthenticatedUser currentUser = AuthenticatedUserHolder.current();
-            if (currentUser != null && currentUser.tenantId() != null && !currentUser.tenantId().equals(TenantResolver.PLATFORM_TENANT_ID)) {
-                effectiveTenantId = currentUser.tenantId();
-            } else {
-                effectiveTenantId = TenantResolver.PLATFORM_TENANT_ID;
-            }
-        }
+        UUID effectiveTenantId = TenantResolver.resolveForOperation(requestedTenantId, AuthenticatedUserHolder.current());
 
         if ("RUC".equalsIgnoreCase(resolvedType) && resolvedNumber.length() == 11) {
             try {

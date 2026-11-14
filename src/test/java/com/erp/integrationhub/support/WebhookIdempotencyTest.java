@@ -42,6 +42,9 @@ class WebhookIdempotencyTest extends AbstractPostgresIntegrationTest {
     private IdempotencyRepositoryPort idempotencyRepositoryPort;
 
     @Autowired
+    private com.erp.integrationhub.domain.port.TenantContextPort tenantContextPort;
+
+    @Autowired
     private UnitOfWork unitOfWork;
 
     private WebhookProcessingService servicio;
@@ -49,10 +52,6 @@ class WebhookIdempotencyTest extends AbstractPostgresIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        // El registro del aviso procesado escribe en la base de datos, con la
-        // politica de aislamiento: hace falta un contexto de taller.
-        com.erp.integrationhub.infrastructure.persistence.rls.TenantContextHolder.setTenantId(
-                UUID.fromString("b0b0b0b0-c1c1-d2d2-e3e3-f4f4f4f4f4f4"));
         attemptRepositoryPort = mock(IntegrationAttemptRepositoryPort.class);
         servicio = new WebhookProcessingService(
                 "secreto-de-stripe",
@@ -60,6 +59,7 @@ class WebhookIdempotencyTest extends AbstractPostgresIntegrationTest {
                 attemptRepositoryPort,
                 idempotencyRepositoryPort,
                 processedWebhookRepositoryPort,
+                tenantContextPort,
                 CLAVE_DE_AVISOS,
                 300,
                 unitOfWork);

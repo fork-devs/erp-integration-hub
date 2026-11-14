@@ -162,8 +162,12 @@ public class IntegrationAdminController {
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
     @Operation(summary = "Reactivate Dead Letter Queue task",
             description = "Returns the task to the pending retry queue with reset attempts counter")
-    public ResponseEntity<Map<String, Object>> reactivateTask(@PathVariable UUID id) {
-        RetryTask task = reactivateRetryTaskUseCase.reactivate(id);
+    public ResponseEntity<Map<String, Object>> reactivateTask(
+            @RequestHeader(value = "X-Tenant-ID", required = false) UUID requestedTenantId,
+            @PathVariable UUID id) {
+        UUID tenantId = com.erp.integrationhub.interfaces.rest.support.TenantResolver.resolveForOperation(
+                requestedTenantId, getAuthenticatedUser());
+        RetryTask task = withTenantContext(tenantId, () -> reactivateRetryTaskUseCase.reactivate(id));
         return ResponseEntity.ok(Map.of(
                 "id", task.getId().toString(),
                 "status", task.getStatus(),

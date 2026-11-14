@@ -1,13 +1,13 @@
 package com.erp.integrationhub.infrastructure.security;
 
-import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
-import com.erp.integrationhub.domain.port.UnitOfWork;
+import com.erp.integrationhub.infrastructure.persistence.rls.PlatformScopeQueryExecutor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 
 /**
@@ -28,24 +28,22 @@ public class StaleIdempotencyKeyCleanupTask {
 
     private static final Logger log = LoggerFactory.getLogger(StaleIdempotencyKeyCleanupTask.class);
 
-    private final IdempotencyRepositoryPort idempotencyRepositoryPort;
-    private final UnitOfWork unitOfWork;
+    private final PlatformScopeQueryExecutor platformScopeQueryExecutor;
     private final long ventanaMinutos;
 
     public StaleIdempotencyKeyCleanupTask(
-            IdempotencyRepositoryPort idempotencyRepositoryPort,
-            UnitOfWork unitOfWork,
+            PlatformScopeQueryExecutor platformScopeQueryExecutor,
             @Value("${erp.integration.idempotency-stale-minutes:30}") long ventanaMinutos) {
-        this.idempotencyRepositoryPort = idempotencyRepositoryPort;
-        this.unitOfWork = unitOfWork;
+        this.platformScopeQueryExecutor = platformScopeQueryExecutor;
         this.ventanaMinutos = ventanaMinutos;
     }
 
     @Scheduled(cron = "${erp.integration.idempotency-cleanup-cron:0 7 * * * *}")
     public void liberarClavesEnCurso() {
         Instant anterior = Instant.now().minusSeconds(ventanaMinutos * 60);
-        int liberadas = unitOfWork.callInTransaction(
-                () -> idempotencyRepositoryPort.releaseStaleProgress(anterior));
+        int liberadas = platformScopeQueryExecutor.update(
+                "UPDATE idempotency_keys SET state = 'RELEASED' WHERE state = 'IN_PROGRESS' AND created_at < ?",
+                Timestamp.from(anterior));
 
         if (liberadas > 0) {
             log.info("Se han liberado {} claves de idempotencia que llevaban en curso mas de {} minutos",

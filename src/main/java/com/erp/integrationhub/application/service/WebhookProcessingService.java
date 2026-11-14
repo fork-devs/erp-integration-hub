@@ -12,7 +12,9 @@ import com.erp.integrationhub.domain.model.ProviderType;
 import com.erp.integrationhub.domain.port.IdempotencyRepositoryPort;
 import com.erp.integrationhub.domain.port.IntegrationAttemptRepositoryPort;
 import com.erp.integrationhub.domain.port.ProcessedWebhookRepositoryPort;
+import com.erp.integrationhub.domain.port.TenantContextPort;
 import com.erp.integrationhub.domain.port.UnitOfWork;
+import com.erp.integrationhub.domain.valueobject.TenantId;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -41,7 +43,15 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
     private final IdempotencyRepositoryPort idempotencyRepositoryPort;
     private final ObjectMapper objectMapper;
     private final UnitOfWork unitOfWork;
+    private static final TenantContextPort NOOP_TENANT_CONTEXT = new TenantContextPort() {
+        @Override
+        public <T> T runInTenantContext(UUID tenantId, java.util.function.Supplier<T> action) {
+            return action.get();
+        }
+    };
+
     private final ProcessedWebhookRepositoryPort processedWebhookRepositoryPort;
+    private final TenantContextPort tenantContextPort;
     private final String webhookSigningSecret;
 
     public WebhookProcessingService(
@@ -53,11 +63,27 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
             String webhookSigningSecret,
             long timeWindowSeconds,
             UnitOfWork unitOfWork) {
+        this(stripeWebhookSecret, apisunatWebhookSecret, attemptRepositoryPort, idempotencyRepositoryPort,
+                processedWebhookRepositoryPort, NOOP_TENANT_CONTEXT,
+                webhookSigningSecret, timeWindowSeconds, unitOfWork);
+    }
+
+    public WebhookProcessingService(
+            String stripeWebhookSecret,
+            String apisunatWebhookSecret,
+            IntegrationAttemptRepositoryPort attemptRepositoryPort,
+            IdempotencyRepositoryPort idempotencyRepositoryPort,
+            ProcessedWebhookRepositoryPort processedWebhookRepositoryPort,
+            TenantContextPort tenantContextPort,
+            String webhookSigningSecret,
+            long timeWindowSeconds,
+            UnitOfWork unitOfWork) {
         this.stripeWebhookSecret = stripeWebhookSecret != null ? stripeWebhookSecret.trim() : "";
         this.apisunatWebhookSecret = apisunatWebhookSecret != null ? apisunatWebhookSecret.trim() : "";
         this.attemptRepositoryPort = attemptRepositoryPort;
         this.idempotencyRepositoryPort = idempotencyRepositoryPort;
         this.processedWebhookRepositoryPort = processedWebhookRepositoryPort;
+        this.tenantContextPort = tenantContextPort != null ? tenantContextPort : NOOP_TENANT_CONTEXT;
         this.webhookSigningSecret = webhookSigningSecret != null ? webhookSigningSecret.trim() : "";
         this.timeWindowSeconds = timeWindowSeconds;
         this.unitOfWork = unitOfWork;
@@ -161,133 +187,149 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
 
         log.info("Processing cryptographically verified webhook from {}: {}", provider, payload);
 
-        // 2. Register processed event to prevent duplicate replays
-        UUID eventId = resolveEventId(provider, payload);
-        if (eventId != null && processedWebhookRepositoryPort != null) {
-            boolean alreadyProcessed = unitOfWork.callInTransaction(
-                    () -> processedWebhookRepositoryPort.register(eventId, provider));
-            if (alreadyProcessed) {
-                log.info("Webhook event {} was already processed: ignoring replay", eventId);
-                return true;
-            }
+        // 2. Extract and validate target tenant ID before any tenant-scoped persistence
+        UUID extractedTenantId = extractTenantId(provider, payload);
+        if (extractedTenantId == null || TenantId.NIL_UUID.equals(extractedTenantId)) {
+            throw new TenantContextMissingException(
+                    "Webhook does not contain a valid target tenant ID and cannot be processed");
         }
+        final UUID resolvedTenantId = extractedTenantId;
 
-        // 3. Process business payload and update corresponding states
-        UUID effectiveTenantId = null;
-        UUID referenceId = null;
+        return tenantContextPort.runInTenantContext(resolvedTenantId, () -> {
+            // 3. Register processed event to prevent duplicate replays
+            UUID eventId = resolveEventId(provider, payload);
+            if (eventId != null && processedWebhookRepositoryPort != null) {
+                boolean alreadyProcessed = unitOfWork.callInTransaction(
+                        () -> processedWebhookRepositoryPort.register(eventId, provider));
+                if (alreadyProcessed) {
+                    log.info("Webhook event {} was already processed: ignoring replay", eventId);
+                    return true;
+                }
+            }
 
+            // 4. Process business payload and update corresponding states
+            UUID referenceId = null;
+
+            try {
+                JsonNode rootNode = objectMapper.readTree(payload);
+
+                if (provider == ProviderType.STRIPE) {
+                    String eventType = rootNode.path("type").asText(rootNode.path("event").asText("unknown"));
+                    JsonNode dataObj = rootNode.path("data").path("object");
+                    if (dataObj.isMissingNode() || dataObj.isNull()) {
+                        dataObj = rootNode;
+                    }
+
+                    String stripeId = dataObj.path("id").asText(null);
+                    JsonNode metadata = dataObj.path("metadata");
+                    String paymentStr = metadata.path("pago_id").asText(metadata.path("pagoId").asText(null));
+
+                    if (paymentStr != null) {
+                        try { referenceId = UUID.fromString(paymentStr); } catch (Exception ignored) {}
+                    } else if (stripeId != null) {
+                        referenceId = UUID.nameUUIDFromBytes(stripeId.getBytes(StandardCharsets.UTF_8));
+                    }
+
+                    if ("payment_intent.succeeded".equalsIgnoreCase(eventType) || "charge.succeeded".equalsIgnoreCase(eventType)) {
+                        if (idempotencyRepositoryPort != null && referenceId != null) {
+                            PaymentResult updatedPayment = new PaymentResult(
+                                    referenceId,
+                                    true,
+                                    "PAID",
+                                    stripeId,
+                                    null,
+                                    "AUTH-STRIPE-WEBHOOK",
+                                    null,
+                                    false
+                            );
+                            final String paymentPayload = objectMapper.writeValueAsString(updatedPayment);
+                            final UUID targetRef = referenceId;
+                            unitOfWork.runInTransaction(() -> idempotencyRepositoryPort.save(IdempotencyRecord.of(
+                                    resolvedTenantId,
+                                    IdempotencyScope.PAYMENT,
+                                    buildOperationKey(resolvedTenantId, targetRef),
+                                    paymentPayload
+                            )));
+                        }
+                    }
+                } else {
+                    // APISUNAT Webhook
+                    JsonNode payloadNode = rootNode.path("payload");
+                    String status = payloadNode.path("estado").asText(rootNode.path("estado").asText("ACEPTADO"));
+                    String hash = payloadNode.path("hash").asText(rootNode.path("hash").asText(null));
+                    String xml = payloadNode.path("xml").asText(rootNode.path("xml").asText(null));
+                    String cdr = payloadNode.path("cdr").asText(rootNode.path("cdr").asText(null));
+                    String pdf = payloadNode.path("pdf").path("a4").asText(payloadNode.path("pdf").asText(null));
+
+                    String compStr = rootNode.path("comprobante_id").asText(null);
+                    if (compStr != null) {
+                        try { referenceId = UUID.fromString(compStr); } catch (Exception ignored) {}
+                    }
+
+                    if (idempotencyRepositoryPort != null && referenceId != null) {
+                        InvoiceResult updatedResult = new InvoiceResult(
+                                referenceId,
+                                "ACEPTADO".equalsIgnoreCase(status),
+                                status,
+                                "0",
+                                "Voucher updated via SUNAT webhook",
+                                pdf,
+                                xml,
+                                cdr,
+                                hash,
+                                false
+                        );
+                        final String invoicePayload = objectMapper.writeValueAsString(updatedResult);
+                        final UUID targetRef = referenceId;
+                        unitOfWork.runInTransaction(() -> idempotencyRepositoryPort.save(IdempotencyRecord.of(
+                                resolvedTenantId,
+                                IdempotencyScope.VOUCHER,
+                                targetRef.toString(),
+                                invoicePayload
+                        )));
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Error processing structured webhook content: {}", e.getMessage());
+            }
+
+            if (referenceId == null) {
+                referenceId = UUID.nameUUIDFromBytes(payload.getBytes(StandardCharsets.UTF_8));
+            }
+
+            attemptRepositoryPort.save(IntegrationAttempt.ok(
+                    resolvedTenantId,
+                    provider,
+                    "WEBHOOK_PROCESSED",
+                    referenceId,
+                    1
+            ));
+
+            return true;
+        });
+    }
+
+    private UUID extractTenantId(ProviderType provider, String payload) {
         try {
             JsonNode rootNode = objectMapper.readTree(payload);
-
+            String tenantStr;
             if (provider == ProviderType.STRIPE) {
-                String eventType = rootNode.path("type").asText(rootNode.path("event").asText("unknown"));
                 JsonNode dataObj = rootNode.path("data").path("object");
                 if (dataObj.isMissingNode() || dataObj.isNull()) {
                     dataObj = rootNode;
                 }
-
-                String stripeId = dataObj.path("id").asText(null);
                 JsonNode metadata = dataObj.path("metadata");
-                String tenantStr = metadata.path("tenant_id").asText(metadata.path("tenantId").asText(null));
-                String paymentStr = metadata.path("pago_id").asText(metadata.path("pagoId").asText(null));
-
-                if (tenantStr != null) {
-                    try { effectiveTenantId = UUID.fromString(tenantStr); } catch (Exception ignored) {}
-                }
-                if (paymentStr != null) {
-                    try { referenceId = UUID.fromString(paymentStr); } catch (Exception ignored) {}
-                } else if (stripeId != null) {
-                    referenceId = UUID.nameUUIDFromBytes(stripeId.getBytes(StandardCharsets.UTF_8));
-                }
-
-                if ("payment_intent.succeeded".equalsIgnoreCase(eventType) || "charge.succeeded".equalsIgnoreCase(eventType)) {
-                    if (idempotencyRepositoryPort != null && referenceId != null) {
-                        PaymentResult updatedPayment = new PaymentResult(
-                                referenceId,
-                                true,
-                                "PAID",
-                                stripeId,
-                                null,
-                                "AUTH-STRIPE-WEBHOOK",
-                                null,
-                                false
-                        );
-                        final String paymentPayload = objectMapper.writeValueAsString(updatedPayment);
-                        final UUID targetTenant = effectiveTenantId;
-                        final UUID targetRef = referenceId;
-                        unitOfWork.runInTransaction(() -> idempotencyRepositoryPort.save(IdempotencyRecord.of(
-                                targetTenant,
-                                IdempotencyScope.PAYMENT,
-                                buildOperationKey(targetTenant, targetRef),
-                                paymentPayload
-                        )));
-                    }
-                }
+                tenantStr = metadata.path("tenant_id").asText(metadata.path("tenantId").asText(null));
             } else {
-                // APISUNAT Webhook
-                JsonNode payloadNode = rootNode.path("payload");
-                String status = payloadNode.path("estado").asText(rootNode.path("estado").asText("ACEPTADO"));
-                String hash = payloadNode.path("hash").asText(rootNode.path("hash").asText(null));
-                String xml = payloadNode.path("xml").asText(rootNode.path("xml").asText(null));
-                String cdr = payloadNode.path("cdr").asText(rootNode.path("cdr").asText(null));
-                String pdf = payloadNode.path("pdf").path("a4").asText(payloadNode.path("pdf").asText(null));
-
-                String tenantStr = rootNode.path("tenant_id").asText(null);
-                String compStr = rootNode.path("comprobante_id").asText(null);
-
-                if (tenantStr != null) {
-                    try { effectiveTenantId = UUID.fromString(tenantStr); } catch (Exception ignored) {}
-                }
-                if (compStr != null) {
-                    try { referenceId = UUID.fromString(compStr); } catch (Exception ignored) {}
-                }
-
-                if (idempotencyRepositoryPort != null && referenceId != null) {
-                    InvoiceResult updatedResult = new InvoiceResult(
-                            referenceId,
-                            "ACEPTADO".equalsIgnoreCase(status),
-                            status,
-                            "0",
-                            "Voucher updated via SUNAT webhook",
-                            pdf,
-                            xml,
-                            cdr,
-                            hash,
-                            false
-                    );
-                    final String invoicePayload = objectMapper.writeValueAsString(updatedResult);
-                    final UUID targetTenant = effectiveTenantId;
-                    final UUID targetRef = referenceId;
-                    unitOfWork.runInTransaction(() -> idempotencyRepositoryPort.save(IdempotencyRecord.of(
-                            targetTenant,
-                            IdempotencyScope.VOUCHER,
-                            targetRef.toString(),
-                            invoicePayload
-                    )));
-                }
+                tenantStr = rootNode.path("tenant_id").asText(null);
             }
+            if (tenantStr == null || tenantStr.isBlank()) {
+                return null;
+            }
+            return UUID.fromString(tenantStr.trim());
         } catch (Exception e) {
-            log.warn("Error processing structured webhook content: {}", e.getMessage());
+            return null;
         }
-
-        if (effectiveTenantId == null) {
-            throw new TenantContextMissingException(
-                    "Webhook does not contain target tenant ID and cannot be processed");
-        }
-
-        if (referenceId == null) {
-            referenceId = UUID.nameUUIDFromBytes(payload.getBytes(StandardCharsets.UTF_8));
-        }
-
-        attemptRepositoryPort.save(IntegrationAttempt.ok(
-                effectiveTenantId,
-                provider,
-                "WEBHOOK_PROCESSED",
-                referenceId,
-                1
-        ));
-
-        return true;
     }
 
     public static boolean verifyStripeSignature(String payload, String signatureHeader, String secret) {

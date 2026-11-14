@@ -125,8 +125,10 @@ public class ElectronicInvoicingController {
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'ADMIN_TALLER', 'SUPERADMIN', 'INTERNAL_SERVICE')")
     @Operation(summary = "Void/cancel electronic invoice, note or boleta via APISUNAT", description = "Dispatches communication of voiding (/api/v3/voided) or daily summary (/api/v3/daily-summary) to SUNAT")
     public ResponseEntity<InvoiceResponse> voidInvoice(
-            @RequestHeader("X-Tenant-ID") UUID tenantId,
+            @RequestHeader(value = "X-Tenant-ID", required = false) UUID requestedTenantId,
             @Valid @RequestBody VoidInvoiceRequest request) {
+
+        UUID tenantId = TenantResolver.resolveForOperation(requestedTenantId, AuthenticatedUserHolder.current());
 
         UUID invoiceId = request.invoiceId() != null
                 ? request.invoiceId()

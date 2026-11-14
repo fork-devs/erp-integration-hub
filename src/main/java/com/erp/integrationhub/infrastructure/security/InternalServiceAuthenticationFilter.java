@@ -203,15 +203,27 @@ public class InternalServiceAuthenticationFilter extends OncePerRequestFilter {
 
                 String sub = claims.getSubject();
                 UUID userId = null;
-                try {
-                    if (sub != null) userId = UUID.fromString(sub);
-                } catch (IllegalArgumentException ignored) {}
+                if (sub != null && !sub.isBlank()) {
+                    try {
+                        userId = com.erp.integrationhub.domain.valueobject.TenantId.fromString(sub).value();
+                    } catch (IllegalArgumentException ex) {
+                        log.warn("Invalid sub claim in JWT for request {}: {}", request.getRequestURI(), ex.getMessage());
+                        sendErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "Invalid subject claim in token");
+                        return;
+                    }
+                }
 
-                String tenantClaim = (String) claims.getClaim("tenant_id");
+                String tenantClaim = claims.getStringClaim("tenant_id");
                 UUID tenantId = null;
-                try {
-                    if (tenantClaim != null) tenantId = UUID.fromString(tenantClaim);
-                } catch (IllegalArgumentException ignored) {}
+                if (tenantClaim != null && !tenantClaim.isBlank()) {
+                    try {
+                        tenantId = com.erp.integrationhub.domain.valueobject.TenantId.fromString(tenantClaim).value();
+                    } catch (IllegalArgumentException ex) {
+                        log.warn("Invalid tenant_id claim in JWT for request {}: {}", request.getRequestURI(), ex.getMessage());
+                        sendErrorResponse(response, HttpServletResponse.SC_UNAUTHORIZED, "Invalid tenant_id claim in token");
+                        return;
+                    }
+                }
 
                 // El claim de roles es un ARRAY, con el mismo contrato que
                 // usa el gateway. Un token sin roles NO recibe un rol por

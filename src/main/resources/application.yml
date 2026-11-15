@@ -98,11 +98,11 @@ erp:
       sandbox-mode: ${STRIPE_SANDBOX_MODE:true}
     chequea:
       base-url: ${CHEQUEA_BASE_URL:https://api.chequea.pe/v1}
-      token: ${CHEQUEA_TOKEN:ak_live_QveW-lhQq5HY3ezsdyBqY_ttIKRDm4UHLsms8aT5kzw}
+      token: ${CHEQUEA_TOKEN:}
       sandbox-mode: ${CHEQUEA_SANDBOX_MODE:false}
     factiliza:
       base-url: ${FACTILIZA_BASE_URL:https://api.factiliza.com/pe/v1}
-      token: ${FACTILIZA_TOKEN:eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MjcyOSJ9.cUmqeCgoNOFj1LXiZHLmIKfUkobStMBNhvKfsAzL_6U}
+      token: ${FACTILIZA_TOKEN:}
       sandbox-mode: ${FACTILIZA_SANDBOX_MODE:false}
     apiperu:
       base-url: ${APIPERU_BASE_URL:https://apiperu.dev/api}
@@ -111,8 +111,8 @@ erp:
     storage:
       endpoint: ${S3_ENDPOINT:https://8d009c5a27b703c2906fd1b00b96908c.r2.cloudflarestorage.com}
       bucket: ${S3_BUCKET_NAME:driveos}
-      access-key: ${S3_ACCESS_KEY_ID:2a46a587f83b6b3fee50d384152642b7}
-      secret-key: ${S3_SECRET_ACCESS_KEY:8f83859b99f279a5dbf5632bd2a2327505643c10a6c83a9836199b0ce846ce2a}
+      access-key: ${S3_ACCESS_KEY_ID:}
+      secret-key: ${S3_SECRET_ACCESS_KEY:}
       public-url: ${S3_PUBLIC_URL:https://8d009c5a27b703c2906fd1b00b96908c.r2.cloudflarestorage.com/driveos}
     retry:
       enabled: ${RETRY_ENABLED:true}

@@ -81,7 +81,7 @@ class ElectronicInvoicingServiceTest {
         EmitInvoiceCommand command = new EmitInvoiceCommand(
                 tenantId,
                 invoiceId,
-                "FACTURA",
+                "INVOICE",
                 "F001",
                 123,
                 "6",
@@ -117,7 +117,7 @@ class ElectronicInvoicingServiceTest {
         // Then
         assertNotNull(result);
         assertTrue(result.successful());
-        assertEquals("ACEPTADO", result.sunatStatus());
+        assertEquals("ACCEPTED", result.sunatStatus());
         assertEquals("https://storage.pe/pdf/F001-123.pdf", result.pdfUrl());
         assertFalse(result.cachedResponse());
 
@@ -133,7 +133,7 @@ class ElectronicInvoicingServiceTest {
         EmitInvoiceCommand command = new EmitInvoiceCommand(
                 tenantId,
                 invoiceId,
-                "FACTURA",
+                "INVOICE",
                 "F001",
                 123,
                 "6",
@@ -154,7 +154,7 @@ class ElectronicInvoicingServiceTest {
         String fingerprint = PayloadFingerprint.of(String.join("|",
                 String.valueOf(tenantId),
                 String.valueOf(invoiceId),
-                "FACTURA",
+                "INVOICE",
                 "F001",
                 "123",
                 "20123456789",
@@ -186,7 +186,7 @@ class ElectronicInvoicingServiceTest {
         EmitInvoiceCommand command = new EmitInvoiceCommand(
                 tenantId,
                 invoiceId,
-                "BOLETA",
+                "RECEIPT",
                 "B001",
                 55,
                 "1",
@@ -213,7 +213,7 @@ class ElectronicInvoicingServiceTest {
         // Then
         assertNotNull(result);
         assertTrue(result.successful());
-        assertEquals("PENDIENTE_SUNAT", result.sunatStatus());
+        assertEquals("PENDING_SUNAT", result.sunatStatus());
 
         verify(retryQueueRepositoryPort).save(any());
         verify(attemptRepositoryPort).save(any());

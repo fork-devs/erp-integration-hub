@@ -86,7 +86,7 @@ class RetrySchedulerServiceTest {
         EmitInvoiceCommand cmd = new EmitInvoiceCommand(
                 tenantId,
                 invoiceId,
-                "FACTURA",
+                "INVOICE",
                 "F001",
                 123,
                 "6",

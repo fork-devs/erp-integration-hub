@@ -63,7 +63,7 @@ class ElectronicInvoicingControllerTest {
         String jsonPayload = """
                 {
                     "comprobanteId": "%s",
-                    "tipo": "FACTURA",
+                    "tipo": "INVOICE",
                     "serie": "F001",
                     "numero": 100,
                     "clienteTipoDoc": "6",
@@ -107,7 +107,7 @@ class ElectronicInvoicingControllerTest {
         InvoiceResult mockResult = new InvoiceResult(
                 invoiceId,
                 true,
-                "ANULADO",
+                "VOIDED",
                 "0",
                 "Comprobante dado de baja exitosamente",
                 null,
@@ -134,7 +134,7 @@ class ElectronicInvoicingControllerTest {
                         .content(jsonPayload))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.exitoso").value(true))
-                .andExpect(jsonPath("$.estadoSunat").value("ANULADO"));
+                .andExpect(jsonPath("$.estadoSunat").value("VOIDED"));
     }
 
     @Test
@@ -147,7 +147,7 @@ class ElectronicInvoicingControllerTest {
         InvoiceResult mockResult = new InvoiceResult(
                 invoiceId,
                 true,
-                "ACEPTADO",
+                "ACCEPTED",
                 "0",
                 "Comprobante aceptado por SUNAT",
                 "https://storage.pe/f001-100.pdf",
@@ -173,7 +173,7 @@ class ElectronicInvoicingControllerTest {
                         .content(jsonPayload))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.exitoso").value(true))
-                .andExpect(jsonPath("$.estadoSunat").value("ACEPTADO"))
+                .andExpect(jsonPath("$.estadoSunat").value("ACCEPTED"))
                 .andExpect(jsonPath("$.pdfUrl").value("https://storage.pe/f001-100.pdf"));
     }
 }

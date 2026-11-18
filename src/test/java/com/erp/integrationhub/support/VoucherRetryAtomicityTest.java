@@ -122,7 +122,7 @@ class VoucherRetryAtomicityTest extends AbstractPostgresIntegrationTest {
                 {
                   "tenantId": "%s",
                   "comprobanteId": "%s",
-                  "tipo": "FACTURA",
+                  "tipo": "INVOICE",
                   "serie": "F001",
                   "numero": 1,
                   "clienteTipoDoc": "DNI",

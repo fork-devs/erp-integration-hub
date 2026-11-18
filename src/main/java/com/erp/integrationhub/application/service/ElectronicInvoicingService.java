@@ -95,7 +95,7 @@ public class ElectronicInvoicingService implements EmitInvoiceUseCase {
 
             // If pending in SUNAT, re-check provider status
             if (InvoiceStatus.PENDING.name().equalsIgnoreCase(cachedResult.sunatStatus())
-                    || InvoiceStatus.PENDIENTE_SUNAT_ALIAS.equalsIgnoreCase(cachedResult.sunatStatus())) {
+                    || "PENDING_SUNAT".equalsIgnoreCase(cachedResult.sunatStatus())) {
                 try {
                     DeclarationResult statusCheck = taxAuthorityEmitterPort.queryInvoiceStatus(
                             command.type(), command.series(), command.number()
@@ -354,7 +354,7 @@ public class ElectronicInvoicingService implements EmitInvoiceUseCase {
 
     private InvoiceResult deserializeResult(UUID invoiceId, String payload, boolean fromCache) {
         if (payload == null || payload.isBlank()) {
-            return new InvoiceResult(invoiceId, true, "PENDIENTE_SUNAT", "0", "Processing", null, null, null, null, fromCache);
+            return new InvoiceResult(invoiceId, true, "PENDING_SUNAT", "0", "Processing", null, null, null, null, fromCache);
         }
         try {
             com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(payload);
@@ -381,7 +381,7 @@ public class ElectronicInvoicingService implements EmitInvoiceUseCase {
             );
         } catch (Exception e) {
             log.warn("Error deserializing cached invoice result: {}", e.getMessage());
-            return new InvoiceResult(invoiceId, true, "PENDIENTE_SUNAT", "0", "Processing", null, null, null, null, fromCache);
+            return new InvoiceResult(invoiceId, true, "PENDING_SUNAT", "0", "Processing", null, null, null, null, fromCache);
         }
     }
 

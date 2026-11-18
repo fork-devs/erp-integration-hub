@@ -69,11 +69,11 @@ class VoidEmissionTest extends AbstractPostgresIntegrationTest {
                 .thenThrow(new ProviderUnavailableException("Provider temporarily unavailable"));
 
         InvoiceResult result = electronicInvoicingService.voidInvoice(
-                TENANT_ID, UUID.randomUUID(), "FACTURA", "F001", 123, "Emission error");
+                TENANT_ID, UUID.randomUUID(), "INVOICE", "F001", 123, "Emission error");
 
         assertTrue(result.successful(),
                 "A rescheduled voiding is not a final rejection; client can safely retry");
-        assertEquals("PENDIENTE_SUNAT", result.sunatStatus());
+        assertEquals("PENDING_SUNAT", result.sunatStatus());
 
         verify(retryQueueRepositoryPort).save(any());
         verify(attemptRepositoryPort).save(any());
@@ -86,10 +86,10 @@ class VoidEmissionTest extends AbstractPostgresIntegrationTest {
                 .thenReturn(DeclarationResult.rejected("2335", "Voucher cannot be voided"));
 
         InvoiceResult result = electronicInvoicingService.voidInvoice(
-                TENANT_ID, UUID.randomUUID(), "FACTURA", "F001", 123, "Emission error");
+                TENANT_ID, UUID.randomUUID(), "INVOICE", "F001", 123, "Emission error");
 
         assertFalse(result.successful(), "Definitive rejection is returned to client");
-        assertEquals("RECHAZADO", result.sunatStatus());
+        assertEquals("REJECTED", result.sunatStatus());
         assertEquals("2335", result.sunatResponseCode(),
                 "Provider response code is preserved in result");
 

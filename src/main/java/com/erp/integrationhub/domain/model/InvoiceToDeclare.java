@@ -52,7 +52,7 @@ public class InvoiceToDeclare implements Serializable {
         this.type = type;
         this.series = series.toUpperCase().trim();
         this.number = number;
-        this.customerDocType = customerDocType != null ? customerDocType : (type == InvoiceType.FACTURA ? "6" : "1");
+        this.customerDocType = customerDocType != null ? customerDocType : (type == InvoiceType.INVOICE ? "6" : "1");
         this.customerDocNumber = customerDocNumber != null ? customerDocNumber.trim() : "";
         this.customerLegalName = customerLegalName != null ? customerLegalName.trim() : "CLIENTES VARIOS";
         this.customerAddress = customerAddress != null ? customerAddress.trim() : "";

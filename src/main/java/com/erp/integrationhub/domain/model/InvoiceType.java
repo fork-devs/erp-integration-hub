@@ -4,10 +4,10 @@ package com.erp.integrationhub.domain.model;
  * Supported electronic invoice/voucher types according to SUNAT catalog 01.
  */
 public enum InvoiceType {
-    FACTURA("01"),
-    BOLETA("03"),
-    NOTA_CREDITO("07"),
-    NOTA_DEBITO("08");
+    INVOICE("01"),
+    RECEIPT("03"),
+    CREDIT_NOTE("07"),
+    DEBIT_NOTE("08");
 
     private final String sunatCode;
 
@@ -18,18 +18,9 @@ public enum InvoiceType {
     /**
      * Returns the 2-digit SUNAT catalog code for this invoice type.
      *
-     * @return 2-digit SUNAT code (e.g., "01" for Factura, "03" for Boleta)
+     * @return 2-digit SUNAT code (e.g., "01" for Invoice, "03" for Receipt)
      */
     public String getSunatCode() {
-        return sunatCode;
-    }
-
-    /**
-     * Backward-compatible alias for getSunatCode.
-     *
-     * @return 2-digit SUNAT code
-     */
-    public String getCodigoSunat() {
         return sunatCode;
     }
 }

@@ -161,10 +161,10 @@ public class ApiSunatElectronicInvoicingAdapter implements TaxAuthorityEmitterPo
         ObjectNode root = objectMapper.createObjectNode();
 
         String document = switch (c.getType()) {
-            case FACTURA -> "factura";
-            case BOLETA -> "boleta";
-            case NOTA_CREDITO -> "nota_credito";
-            case NOTA_DEBITO -> "nota_debito";
+            case INVOICE -> "factura";
+            case RECEIPT -> "boleta";
+            case CREDIT_NOTE -> "nota_credito";
+            case DEBIT_NOTE -> "nota_debito";
         };
 
         String currency = c.getCurrency() != null ? c.getCurrency().getCode() : "PEN";

@@ -23,7 +23,7 @@ public interface EmitInvoiceUseCase {
      *
      * @param tenantId workshop tenant identifier
      * @param invoiceId unique invoice identifier
-     * @param type document type (FACTURA, BOLETA)
+     * @param type document type (INVOICE, RECEIPT)
      * @param series document series
      * @param number document sequence number
      * @param reason cancellation reason

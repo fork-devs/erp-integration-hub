@@ -81,7 +81,7 @@ class ElectronicInvoicingServiceTest {
         EmitInvoiceCommand command = new EmitInvoiceCommand(
                 tenantId,
                 invoiceId,
-                "FACTURA",
+                "INVOICE",
                 "F001",
                 123,
                 "6",
@@ -133,7 +133,7 @@ class ElectronicInvoicingServiceTest {
         EmitInvoiceCommand command = new EmitInvoiceCommand(
                 tenantId,
                 invoiceId,
-                "FACTURA",
+                "INVOICE",
                 "F001",
                 123,
                 "6",
@@ -154,7 +154,7 @@ class ElectronicInvoicingServiceTest {
         String fingerprint = PayloadFingerprint.of(String.join("|",
                 String.valueOf(tenantId),
                 String.valueOf(invoiceId),
-                "FACTURA",
+                "INVOICE",
                 "F001",
                 "123",
                 "20123456789",
@@ -186,7 +186,7 @@ class ElectronicInvoicingServiceTest {
         EmitInvoiceCommand command = new EmitInvoiceCommand(
                 tenantId,
                 invoiceId,
-                "BOLETA",
+                "RECEIPT",
                 "B001",
                 55,
                 "1",

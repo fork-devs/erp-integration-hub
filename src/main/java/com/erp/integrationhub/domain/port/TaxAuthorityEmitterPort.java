@@ -19,7 +19,7 @@ public interface TaxAuthorityEmitterPort {
     /**
      * Voids an electronic invoice or submits a daily summary for boletas.
      *
-     * @param type document type (FACTURA, BOLETA)
+     * @param type document type (INVOICE, RECEIPT)
      * @param series document series
      * @param number document number
      * @param reason voiding motive

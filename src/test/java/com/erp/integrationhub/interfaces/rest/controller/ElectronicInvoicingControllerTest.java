@@ -63,7 +63,7 @@ class ElectronicInvoicingControllerTest {
         String jsonPayload = """
                 {
                     "comprobanteId": "%s",
-                    "tipo": "FACTURA",
+                    "tipo": "INVOICE",
                     "serie": "F001",
                     "numero": 100,
                     "clienteTipoDoc": "6",

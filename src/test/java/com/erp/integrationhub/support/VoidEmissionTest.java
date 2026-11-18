@@ -73,7 +73,7 @@ class VoidEmissionTest extends AbstractPostgresIntegrationTest {
 
         assertTrue(result.successful(),
                 "A rescheduled voiding is not a final rejection; client can safely retry");
-        assertEquals("PENDIENTE_SUNAT", result.sunatStatus());
+        assertEquals("PENDING_SUNAT", result.sunatStatus());
 
         verify(retryQueueRepositoryPort).save(any());
         verify(attemptRepositoryPort).save(any());
@@ -89,7 +89,7 @@ class VoidEmissionTest extends AbstractPostgresIntegrationTest {
                 TENANT_ID, UUID.randomUUID(), "INVOICE", "F001", 123, "Emission error");
 
         assertFalse(result.successful(), "Definitive rejection is returned to client");
-        assertEquals("RECHAZADO", result.sunatStatus());
+        assertEquals("REJECTED", result.sunatStatus());
         assertEquals("2335", result.sunatResponseCode(),
                 "Provider response code is preserved in result");
 

@@ -117,7 +117,7 @@ class ElectronicInvoicingServiceTest {
         // Then
         assertNotNull(result);
         assertTrue(result.successful());
-        assertEquals("ACEPTADO", result.sunatStatus());
+        assertEquals("ACCEPTED", result.sunatStatus());
         assertEquals("https://storage.pe/pdf/F001-123.pdf", result.pdfUrl());
         assertFalse(result.cachedResponse());
 
@@ -213,7 +213,7 @@ class ElectronicInvoicingServiceTest {
         // Then
         assertNotNull(result);
         assertTrue(result.successful());
-        assertEquals("PENDIENTE_SUNAT", result.sunatStatus());
+        assertEquals("PENDING_SUNAT", result.sunatStatus());
 
         verify(retryQueueRepositoryPort).save(any());
         verify(attemptRepositoryPort).save(any());

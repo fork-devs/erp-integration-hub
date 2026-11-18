@@ -30,17 +30,6 @@ public enum InvoiceStatus implements Serializable {
     /** Issued but in an unknown state from the provider. */
     UNKNOWN;
 
-    /** Compatibility alias for PENDING state matching API contract. */
-    public static final String PENDIENTE_SUNAT_ALIAS = "PENDIENTE_SUNAT";
-
-    // Backward-compatible enum aliases
-    public static final InvoiceStatus ACEPTADO = ACCEPTED;
-    public static final InvoiceStatus OBSERVADO = OBSERVED;
-    public static final InvoiceStatus RECHAZADO = REJECTED;
-    public static final InvoiceStatus PENDIENTE = PENDING;
-    public static final InvoiceStatus ANULADO = VOIDED;
-    public static final InvoiceStatus DESCONOCIDO = UNKNOWN;
-
     /**
      * Translates a provider status string into a typed InvoiceStatus.
      *
@@ -56,28 +45,23 @@ public enum InvoiceStatus implements Serializable {
             case "ACEPTADO", "ACEPTADA", "ACEPT", "ACCEPTED" -> ACCEPTED;
             case "OBSERVADO", "OBSERVADA", "CON OBSERVACIONES", "OBSERVED" -> OBSERVED;
             case "RECHAZADO", "RECHAZADA", "ERROR", "REJECTED" -> REJECTED;
-            case "PENDIENTE", "PENDIENTE_SUNAT", "EN PROCESO", "PENDING" -> PENDING;
+            case "PENDIENTE", "PENDIENTE_SUNAT", "EN PROCESO", "PENDING", "PENDING_SUNAT" -> PENDING;
             case "ANULADO", "ANULADA", "VOIDED" -> VOIDED;
             default -> UNKNOWN;
         };
     }
 
-    /** Backward compatibility alias for fromProvider. */
-    public static InvoiceStatus desdeProveedor(String status) {
-        return fromProvider(status);
-    }
-
     /**
-     * Returns the SUNAT protocol status string expected by consumers and regulatory endpoints.
+     * Returns the canonical English status string exposed by integration-hub endpoints.
      */
     public String toSunatStatus() {
         return switch (this) {
-            case ACCEPTED -> "ACEPTADO";
-            case OBSERVED -> "OBSERVADO";
-            case REJECTED -> "RECHAZADO";
-            case PENDING -> PENDIENTE_SUNAT_ALIAS;
-            case VOIDED -> "ANULADO";
-            case UNKNOWN -> "DESCONOCIDO";
+            case ACCEPTED -> "ACCEPTED";
+            case OBSERVED -> "OBSERVED";
+            case REJECTED -> "REJECTED";
+            case PENDING -> "PENDING_SUNAT";
+            case VOIDED -> "VOIDED";
+            case UNKNOWN -> "UNKNOWN";
         };
     }
 
@@ -90,11 +74,6 @@ public enum InvoiceStatus implements Serializable {
         return this == ACCEPTED || this == OBSERVED;
     }
 
-    /** Backward compatibility accessor for isIssued. */
-    public boolean emitido() {
-        return isIssued();
-    }
-
     /**
      * Checks if the current state permits retrying declaration to SUNAT.
      *
@@ -102,10 +81,5 @@ public enum InvoiceStatus implements Serializable {
      */
     public boolean isRetryable() {
         return this == PENDING || this == UNKNOWN;
-    }
-
-    /** Backward compatibility accessor for isRetryable. */
-    public boolean reintentable() {
-        return isRetryable();
     }
 }

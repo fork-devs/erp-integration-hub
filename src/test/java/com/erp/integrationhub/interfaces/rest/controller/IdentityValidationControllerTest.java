@@ -73,7 +73,7 @@ class IdentityValidationControllerTest {
         );
         when(queryRucUseCase.queryRuc(any())).thenReturn(result);
 
-        mockMvc.perform(get("/api/v1/integrations/validate/ruc/20601234567")
+        mockMvc.perform(get("/api/v1/identity-validations/ruc/20601234567")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.ruc").value("20601234567"))
@@ -83,7 +83,7 @@ class IdentityValidationControllerTest {
     }
 
     @Test
-    @DisplayName("GET /api/v1/integrations/validate/placa/{placa} - Should return 200 OK with Plate details")
+    @DisplayName("GET /api/v1/identity-validations/placa/{placa} - Should return 200 OK with Plate details")
     void validatePlaca_ShouldReturn200() throws Exception {
         PlateResult result = new PlateResult(
                 "ABC123",
@@ -99,7 +99,7 @@ class IdentityValidationControllerTest {
         );
         when(queryPlateUseCase.queryPlate(any())).thenReturn(result);
 
-        mockMvc.perform(get("/api/v1/integrations/validate/placa/ABC123")
+        mockMvc.perform(get("/api/v1/identity-validations/placa/ABC123")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.placa").value("ABC123"))

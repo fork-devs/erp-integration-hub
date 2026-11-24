@@ -36,7 +36,7 @@ import java.util.function.Supplier;
  * REST controller for external identity (SUNAT RUC, Factiliza DNI/CE) and vehicle registration (SUNARP plate) validations.
  */
 @RestController
-@RequestMapping({"/api/v1/integrations/validate", "/api/v1/identity-validations"})
+@RequestMapping("/api/v1/identity-validations")
 @Tag(name = "Identity & Vehicle Validation", description = "Validates Peruvian RUC against SUNAT/RENIEC and vehicle license plates against SUNARP with high-performance caching")
 public class IdentityValidationController {
 

@@ -2,11 +2,9 @@ package com.erp.integrationhub.support;
 
 import com.erp.integrationhub.infrastructure.adapter.external.ApiSunatElectronicInvoicingAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.ChequeaPeRucValidationAdapter;
-import com.erp.integrationhub.infrastructure.adapter.external.StripePaymentGatewayAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.SunarpVehicleValidationAdapter;
 import com.erp.integrationhub.infrastructure.adapter.simulated.SimulatedApiSunatAdapter;
 import com.erp.integrationhub.infrastructure.adapter.simulated.SimulatedChequeaPeAdapter;
-import com.erp.integrationhub.infrastructure.adapter.simulated.SimulatedStripeAdapter;
 import com.erp.integrationhub.infrastructure.adapter.simulated.SimulatedSunarpAdapter;
 import com.erp.integrationhub.infrastructure.config.ProviderAdapterRegistry;
 import org.junit.jupiter.api.DisplayName;
@@ -28,7 +26,6 @@ class ProviderAdapterRegistryTest {
         ProviderAdapterRegistry registry = buildRegistry(true, "dev");
 
         assertInstanceOf(SimulatedApiSunatAdapter.class, registry.taxAuthorityEmitterPort("u", "t"));
-        assertInstanceOf(SimulatedStripeAdapter.class, registry.paymentGatewayPort("k"));
         assertInstanceOf(SimulatedChequeaPeAdapter.class, registry.identityValidatorPort("u", "t"));
         assertInstanceOf(SimulatedSunarpAdapter.class, registry.vehicleValidatorPort("u", "t"));
     }
@@ -39,7 +36,6 @@ class ProviderAdapterRegistryTest {
         ProviderAdapterRegistry registry = buildRegistry(false, "dev");
 
         assertInstanceOf(ApiSunatElectronicInvoicingAdapter.class, registry.taxAuthorityEmitterPort("u", "t"));
-        assertInstanceOf(StripePaymentGatewayAdapter.class, registry.paymentGatewayPort("k"));
         assertInstanceOf(ChequeaPeRucValidationAdapter.class, registry.identityValidatorPort("u", "t"));
         assertInstanceOf(SunarpVehicleValidationAdapter.class, registry.vehicleValidatorPort("u", "t"));
     }

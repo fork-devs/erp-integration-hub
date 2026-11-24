@@ -35,14 +35,12 @@ class WebhookReceiverControllerTest {
     }
 
     @Test
-    @DisplayName("POST /api/v1/integrations/webhooks/stripe - Should receive and return 200 OK")
-    void receiveStripeWebhook_ShouldReturn200() throws Exception {
-        when(processWebhooksUseCase.processWebhook(any(), any(), any())).thenReturn(true);
-
-        mockMvc.perform(post("/api/v1/integrations/webhooks/stripe")
-                        .header("Stripe-Signature", "sig_header_123")
+    @DisplayName("POST /api/v1/integrations/webhooks/mercadopago - Should receive and return 200 OK")
+    void receiveMercadoPagoWebhook_ShouldReturn200() throws Exception {
+        mockMvc.perform(post("/api/v1/integrations/webhooks/mercadopago")
+                        .header("x-signature", "sig_mp_123")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"type\":\"payment_intent.succeeded\"}"))
+                        .content("{\"action\":\"payment.created\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.received").value(true))
                 .andExpect(jsonPath("$.processed").value(true));

@@ -1,5 +1,7 @@
 package com.erp.integrationhub.infrastructure.config;
 
+import com.erp.integrationhub.domain.model.ChargeRequest;
+import com.erp.integrationhub.domain.model.PaymentOutcome;
 import com.erp.integrationhub.domain.port.IdentityValidatorPort;
 import com.erp.integrationhub.domain.port.PaymentGatewayPort;
 import com.erp.integrationhub.domain.port.PersonalIdentityValidatorPort;
@@ -8,12 +10,10 @@ import com.erp.integrationhub.domain.port.VehicleValidatorPort;
 import com.erp.integrationhub.infrastructure.adapter.external.ApiSunatElectronicInvoicingAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.ChequeaPeRucValidationAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.FactilizaIdentityValidationAdapter;
-import com.erp.integrationhub.infrastructure.adapter.external.StripePaymentGatewayAdapter;
 import com.erp.integrationhub.infrastructure.adapter.external.SunarpVehicleValidationAdapter;
 import com.erp.integrationhub.infrastructure.adapter.simulated.SimulatedApiSunatAdapter;
 import com.erp.integrationhub.infrastructure.adapter.simulated.SimulatedChequeaPeAdapter;
 import com.erp.integrationhub.infrastructure.adapter.simulated.SimulatedFactilizaAdapter;
-import com.erp.integrationhub.infrastructure.adapter.simulated.SimulatedStripeAdapter;
 import com.erp.integrationhub.infrastructure.adapter.simulated.SimulatedSunarpAdapter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,12 +72,18 @@ public class ProviderAdapterRegistry {
     }
 
     @Bean
-    public PaymentGatewayPort paymentGatewayPort(
-            @Value("${erp.integration.stripe.api-key:}") String apiKey) {
-        if (simulatedMode) {
-            return new SimulatedStripeAdapter();
-        }
-        return new StripePaymentGatewayAdapter(apiKey, false);
+    public PaymentGatewayPort paymentGatewayPort() {
+        return new PaymentGatewayPort() {
+            @Override
+            public PaymentOutcome processCharge(ChargeRequest request) {
+                return PaymentOutcome.failure("Direct card charges are disabled; use Mercado Pago in erp-billing-service");
+            }
+
+            @Override
+            public PaymentOutcome queryPaymentStatus(String chargeId) {
+                return PaymentOutcome.failure("Direct card status query is disabled; use Mercado Pago in erp-billing-service");
+            }
+        };
     }
 
     @Bean
@@ -123,7 +129,7 @@ public class ProviderAdapterRegistry {
     }
 
     public PaymentGatewayPort pasarelaDePagoPort(String apiKey) {
-        return paymentGatewayPort(apiKey);
+        return paymentGatewayPort();
     }
 
     public IdentityValidatorPort validadorIdentidadPort(String baseUrl, String token) {

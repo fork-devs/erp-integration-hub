@@ -46,16 +46,16 @@ class AttemptProgressionTest extends AbstractPostgresIntegrationTest {
         assertEquals(0, intentosDe(referencia), " todavia no hay intentos");
 
         registrar(IntegrationAttempt.retry(TALLER,
-                com.erp.integrationhub.domain.model.ProviderType.STRIPE,
+                com.erp.integrationhub.domain.model.ProviderType.MERCADOPAGO,
                 "CHARGE", referencia, 1, "fallo transitorio"));
 
         assertEquals(1, intentosDe(referencia));
         assertEquals(2, 1 + attemptRepositoryPort.countAttempts(
-                TALLER, com.erp.integrationhub.domain.model.ProviderType.STRIPE, "CHARGE", referencia),
+                TALLER, com.erp.integrationhub.domain.model.ProviderType.MERCADOPAGO, "CHARGE", referencia),
                 "El segundo intento debe ser el numero 2");
 
         registrar(IntegrationAttempt.ok(TALLER,
-                com.erp.integrationhub.domain.model.ProviderType.STRIPE,
+                com.erp.integrationhub.domain.model.ProviderType.MERCADOPAGO,
                 "CHARGE", referencia, 2));
 
         assertEquals(2, intentosDe(referencia));
@@ -69,7 +69,7 @@ class AttemptProgressionTest extends AbstractPostgresIntegrationTest {
         // Un fallo ANTERIOR a la llamada al proveedor: no se ha contactado
         // con nadie, y no puede quedar registrado un intento correcto.
         registrar(IntegrationAttempt.retry(TALLER,
-                com.erp.integrationhub.domain.model.ProviderType.STRIPE,
+                com.erp.integrationhub.domain.model.ProviderType.MERCADOPAGO,
                 "CHARGE", referencia, 1, "no se pudo contactar"));
 
         var intentos = unitOfWork.callInTransaction(() ->
@@ -82,7 +82,7 @@ class AttemptProgressionTest extends AbstractPostgresIntegrationTest {
 
     private int intentosDe(UUID referencia) {
         return attemptRepositoryPort.countAttempts(
-                TALLER, com.erp.integrationhub.domain.model.ProviderType.STRIPE, "CHARGE", referencia);
+                TALLER, com.erp.integrationhub.domain.model.ProviderType.MERCADOPAGO, "CHARGE", referencia);
     }
 
     private void registrar(IntegrationAttempt intento) {

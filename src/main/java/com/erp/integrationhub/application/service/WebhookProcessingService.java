@@ -168,7 +168,7 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
 
         // 1. Strict cryptographic verification (Fail-closed)
         boolean validSignature;
-        if (provider == ProviderType.STRIPE) {
+        if (provider == ProviderType.MERCADOPAGO) {
             validSignature = verifyStripeSignature(payload, signatureHeader, stripeWebhookSecret);
         } else {
             validSignature = verifyStandardHmacSignature(payload, signatureHeader, resolveWebhookSigningSecret());
@@ -213,7 +213,7 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
             try {
                 JsonNode rootNode = objectMapper.readTree(payload);
 
-                if (provider == ProviderType.STRIPE) {
+                if (provider == ProviderType.MERCADOPAGO) {
                     String eventType = rootNode.path("type").asText(rootNode.path("event").asText("unknown"));
                     JsonNode dataObj = rootNode.path("data").path("object");
                     if (dataObj.isMissingNode() || dataObj.isNull()) {
@@ -313,7 +313,7 @@ public class WebhookProcessingService implements ProcessWebhooksUseCase {
         try {
             JsonNode rootNode = objectMapper.readTree(payload);
             String tenantStr;
-            if (provider == ProviderType.STRIPE) {
+            if (provider == ProviderType.MERCADOPAGO) {
                 JsonNode dataObj = rootNode.path("data").path("object");
                 if (dataObj.isMissingNode() || dataObj.isNull()) {
                     dataObj = rootNode;

@@ -24,19 +24,3 @@ erp:
       base-url: https://sandbox.apisunat.pe
       token: test_token
       sandbox-mode: true
-    stripe:
-      api-key: sk_test_mock
-      webhook-secret: whsec_test_mock
-      sandbox-mode: true
-    chequea:
-      base-url: https://api.chequea.pe/v1
-      token: test_token
-      sandbox-mode: true
-    apiperu:
-      base-url: https://apiperu.dev/api
-      token: test_token
-      sandbox-mode: true
-    retry:
-      enabled: false
-      interval-ms: 100000
-      max-attempts: 5

@@ -57,7 +57,7 @@ class WebhookProcessingServiceTest {
         String hex = HexFormat.of().formatHex(hmac.doFinal(signedPayload.getBytes(StandardCharsets.UTF_8)));
         String stripeHeader = "t=" + timestamp + ",v1=" + hex;
 
-        boolean result = webhookProcessingService.processWebhook(ProviderType.STRIPE, payload, stripeHeader);
+        boolean result = webhookProcessingService.processWebhook(ProviderType.MERCADOPAGO, payload, stripeHeader);
 
         assertTrue(result);
         verify(attemptRepositoryPort).save(any());
@@ -86,7 +86,7 @@ class WebhookProcessingServiceTest {
         String invalidSignature = "deadbeef1234567890abcdef";
 
         assertThrows(InvalidSignatureException.class, () ->
-                webhookProcessingService.processWebhook(ProviderType.STRIPE, payload, invalidSignature)
+                webhookProcessingService.processWebhook(ProviderType.MERCADOPAGO, payload, invalidSignature)
         );
     }
 
@@ -94,7 +94,7 @@ class WebhookProcessingServiceTest {
     @DisplayName("Should throw IllegalArgumentException when payload is null or blank")
     void processWebhook_WithBlankPayload_ShouldThrowException() {
         assertThrows(IllegalArgumentException.class, () ->
-                webhookProcessingService.processWebhook(ProviderType.STRIPE, "   ", "sig")
+                webhookProcessingService.processWebhook(ProviderType.MERCADOPAGO, "   ", "sig")
         );
     }
 }

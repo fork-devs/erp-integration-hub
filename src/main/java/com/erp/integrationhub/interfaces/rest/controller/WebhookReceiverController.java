@@ -15,26 +15,13 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/integrations/webhooks")
-@Tag(name = "Webhook Receivers", description = "Endpoints for receiving signed webhooks from external providers (Stripe, Nubefact)")
+@Tag(name = "Webhook Receivers", description = "Endpoints for receiving signed webhooks from external providers (Mercado Pago, Nubefact)")
 public class WebhookReceiverController {
 
     private final ProcessWebhooksUseCase processWebhooksUseCase;
 
     public WebhookReceiverController(ProcessWebhooksUseCase processWebhooksUseCase) {
         this.processWebhooksUseCase = processWebhooksUseCase;
-    }
-
-    @PostMapping("/stripe")
-    @Operation(summary = "Receive Stripe webhook events", description = "Verifies HMAC-SHA256 signature and processes asynchronous payment notifications")
-    public ResponseEntity<Map<String, Object>> receiveStripeWebhook(
-            @RequestHeader(value = "Stripe-Signature", required = false) String signature,
-            @RequestBody String payload) {
-
-        boolean processed = processWebhooksUseCase.processWebhook(ProviderType.STRIPE, payload, signature);
-        return ResponseEntity.ok(Map.of(
-                "received", true,
-                "processed", processed
-        ));
     }
 
     @PostMapping("/nubefact")

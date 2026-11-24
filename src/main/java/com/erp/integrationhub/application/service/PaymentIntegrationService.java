@@ -132,18 +132,18 @@ public class PaymentIntegrationService implements ProcessPaymentUseCase {
         // 5. Update attempt log and idempotency record atomically
         unitOfWork.runInTransaction(() -> {
             int attemptCount = 1 + attemptRepositoryPort.countAttempts(
-                    command.tenantId(), ProviderType.STRIPE, "CHARGE", command.paymentId());
+                    command.tenantId(), ProviderType.MERCADOPAGO, "CHARGE", command.paymentId());
 
             attemptRepositoryPort.save(outcome.successful()
                     ? IntegrationAttempt.ok(
                             command.tenantId(),
-                            ProviderType.STRIPE,
+                            ProviderType.MERCADOPAGO,
                             "CHARGE",
                             command.paymentId(),
                             attemptCount)
                     : IntegrationAttempt.retry(
                             command.tenantId(),
-                            ProviderType.STRIPE,
+                            ProviderType.MERCADOPAGO,
                             "CHARGE",
                             command.paymentId(),
                             attemptCount,

@@ -46,15 +46,6 @@ public class ApplicationServiceConfig {
     @Value("${erp.integration.apisunat.sandbox-mode:true}")
     private boolean apisunatSandboxMode;
 
-    @Value("${erp.integration.stripe.api-key:sk_test_mock_stripe_key}")
-    private String stripeApiKey;
-
-    @Value("${erp.integration.stripe.webhook-secret:whsec_test_mock_secret}")
-    private String stripeWebhookSecret;
-
-    @Value("${erp.integration.stripe.sandbox-mode:true}")
-    private boolean stripeSandboxMode;
-
     @Value("${erp.integration.chequea.base-url:https://api.chequea.pe/v1}")
     private String chequeaBaseUrl;
 
@@ -150,7 +141,7 @@ public class ApplicationServiceConfig {
             @Value("${erp.integration.webhook.signing-secret:}") String webhookSigningSecret,
             @Value("${erp.integration.webhook.window-seconds:300}") long timeWindowSeconds,
             UnitOfWork unitOfWork) {
-        return new WebhookProcessingService(stripeWebhookSecret, apisunatToken, attemptRepositoryPort,
+        return new WebhookProcessingService("", apisunatToken, attemptRepositoryPort,
                 idempotencyRepositoryPort, processedWebhookRepositoryPort, tenantContextPort,
                 webhookSigningSecret, timeWindowSeconds, unitOfWork);
     }

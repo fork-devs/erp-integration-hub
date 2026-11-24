@@ -105,7 +105,7 @@ class RetrySchedulerServiceTest {
 
         String jsonPayload = objectMapper.writeValueAsString(cmd);
         RetryTask task1 = RetryTask.create(tenantId, ProviderType.APISUNAT, "EMIT_VOUCHER", invoiceId, jsonPayload, 5);
-        RetryTask task2 = RetryTask.create(tenantId, ProviderType.STRIPE, "PROCESS_PAYMENT", UUID.randomUUID(), "{}", 5);
+        RetryTask task2 = RetryTask.create(tenantId, ProviderType.MERCADOPAGO, "PROCESS_PAYMENT", UUID.randomUUID(), "{}", 5);
 
         when(retryQueueRepositoryPort.findPendingTasks(any(Instant.class), eq(10)))
                 .thenReturn(List.of(task1, task2));

@@ -39,7 +39,7 @@ import java.util.function.Supplier;
 @RestController
 @RequestMapping("/api/v1/integrations/admin")
 @Tag(name = "Integration Administration", description = "Endpoints for monitoring integration attempts, DLQ (Dead Letter Queue), and triggering retry processing")
-@PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
+@PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERADMIN', 'INTERNAL_SERVICE')")
 public class IntegrationAdminController {
 
     private static final Logger log = LoggerFactory.getLogger(IntegrationAdminController.class);
@@ -68,7 +68,7 @@ public class IntegrationAdminController {
      */
     @GetMapping("/attempts")
     @Operation(summary = "Query integration attempts", description = "Fetches integration attempt audit logs by reference ID or status with strict tenant isolation")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERADMIN', 'INTERNAL_SERVICE')")
     public ResponseEntity<List<IntegrationAttemptResponse>> getAttempts(
             @RequestHeader(value = "X-Tenant-ID", required = false) UUID tenantId,
             @RequestParam(value = "referenceId", required = false) UUID referenceId,
@@ -119,7 +119,7 @@ public class IntegrationAdminController {
      */
     @GetMapping("/dlq")
     @Operation(summary = "List Dead Letter Queue tasks", description = "Fetches failed integration tasks that exceeded maximum retry attempts")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERADMIN', 'INTERNAL_SERVICE')")
     public ResponseEntity<List<RetryTaskResponse>> getDlqTasks(
             @RequestHeader(value = "X-Tenant-ID", required = false) UUID tenantId,
             @RequestParam(value = "limit", defaultValue = "50") int limit) {
@@ -159,7 +159,7 @@ public class IntegrationAdminController {
      * Reactivates a dead-letter queue task, resetting its attempt count to 0.
      */
     @PostMapping("/dlq/{id}/reactivate")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERADMIN', 'INTERNAL_SERVICE')")
     @Operation(summary = "Reactivate Dead Letter Queue task",
             description = "Returns the task to the pending retry queue with reset attempts counter")
     public ResponseEntity<Map<String, Object>> reactivateTask(
@@ -180,7 +180,7 @@ public class IntegrationAdminController {
      */
     @PostMapping("/retry/trigger")
     @Operation(summary = "Trigger retry worker manually", description = "Executes the retry queue processor on-demand (ADMIN / INTERNAL_SERVICE only)")
-    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'INTERNAL_SERVICE')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPER_ADMIN', 'SUPERADMIN', 'INTERNAL_SERVICE')")
     public ResponseEntity<Map<String, Object>> triggerRetryWorker() {
         AuthenticatedUser authUser = getAuthenticatedUser();
         if (authUser == null || (!authUser.isAdmin() && !authUser.isInternalService())) {
